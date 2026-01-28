@@ -32,11 +32,11 @@ def get_font(size: int):
 SHOW_GRID = False
 
 INVOICE_TEXT_CONFIG = {
-    "invoice_id": {"x":152,"y":600,"fontSize":25},
-    "date": {"x":675,"y":230,"fontSize":25},
-    "customer": {"x":152,"y":668,"fontSize":23},
-    "paid_amount": {"x":152,"y":725,"fontSize":22},
-    "coin_credit": {"x":152,"y":795,"fontSize":22}
+    "invoice_id": {"x":152,"y":525,"fontSize":25},
+    "date": {"x":675,"y":525,"fontSize":25},
+    "customer": {"x":152,"y":600,"fontSize":23},
+    "paid_amount": {"x":152,"y":730,"fontSize":22},
+    "coin_credit": {"x":152,"y":670,"fontSize":22}
 }
 
 # ================= BACKGROUND =================
