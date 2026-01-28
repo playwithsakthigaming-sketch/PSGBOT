@@ -89,11 +89,6 @@ def generate_invoice(username, rupees, coins):
               font=get_font(cfg["coin_credit"]["fontSize"]),
               fill="cyan")
 
-    draw.text((450,820),
-              "Payment Status: PAID",
-              font=get_font(30),
-              fill=(0,255,0))
-
     buf = BytesIO()
     img.save(buf, "PNG")
     buf.seek(0)
