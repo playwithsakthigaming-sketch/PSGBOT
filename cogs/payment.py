@@ -32,16 +32,16 @@ def get_font(size: int):
 SHOW_GRID = False
 
 INVOICE_TEXT_CONFIG = {
-    "invoice_id": {"x":152,"y":525,"fontSize":27},
-    "date": {"x":675,"y":600,"fontSize":25},
+    "invoice_id": {"x":152,"y":600,"fontSize":25},
+    "date": {"x":675,"y":230,"fontSize":25},
     "customer": {"x":152,"y":668,"fontSize":23},
     "paid_amount": {"x":152,"y":725,"fontSize":22},
-    "coin_credit": {"x":152,"y":600,"fontSize":28}
+    "coin_credit": {"x":152,"y":795,"fontSize":22}
 }
 
 # ================= BACKGROUND =================
 def load_invoice_background():
-    W, H = 1080, 1080
+    W, H = 1000, 800
     try:
         bg = Image.open(INVOICE_BG_PATH).convert("RGB")
         return bg.resize((W, H))
@@ -68,7 +68,7 @@ def generate_invoice(username, rupees, coins):
     draw.text((cfg["invoice_id"]["x"], cfg["invoice_id"]["y"]),
               f"Invoice ID: {invoice_id}",
               font=get_font(cfg["invoice_id"]["fontSize"]),
-              fill="gold")
+              fill="white")
 
     draw.text((cfg["date"]["x"], cfg["date"]["y"]),
               f"Date: {date}",
@@ -88,7 +88,12 @@ def generate_invoice(username, rupees, coins):
     draw.text((cfg["coin_credit"]["x"], cfg["coin_credit"]["y"]),
               f"Coins Credited: {coins}",
               font=get_font(cfg["coin_credit"]["fontSize"]),
-              fill="red")
+              fill="white")
+
+    draw.text((500,740),
+              "Payment Status: PAID",
+              font=get_font(30),
+              fill=(0,255,0))
 
     buf = BytesIO()
     img.save(buf, "PNG")
