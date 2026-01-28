@@ -41,7 +41,7 @@ INVOICE_TEXT_CONFIG = {
 
 # ================= BACKGROUND =================
 def load_invoice_background():
-    W, H = 1000, 800
+    W, H = 1080, 1080
     try:
         bg = Image.open(INVOICE_BG_PATH).convert("RGB")
         return bg.resize((W, H))
