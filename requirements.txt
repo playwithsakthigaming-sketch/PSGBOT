@@ -1,0 +1,8 @@
+discord.py>=2.3.2
+aiosqlite
+python-dotenv
+Pillow
+requests
+yt-dlp
+PyNaCl
+discord.py
