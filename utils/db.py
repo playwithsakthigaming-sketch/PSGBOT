@@ -117,7 +117,6 @@ async def init_db():
     message TEXT,
     last_video TEXT,
     PRIMARY KEY (guild_id, youtube_channel)
-);
         )
         """)
 
