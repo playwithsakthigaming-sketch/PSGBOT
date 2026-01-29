@@ -34,7 +34,7 @@ class YouTube(commands.Cog):
         self.bot = bot
         self.check_videos.start()
 
-    # ---------------- SETUP ----------------
+    # ---------------- ADD CHANNEL ----------------
     @app_commands.command(name="setup_channel", description="Add YouTube alerts (Live + Video + Shorts)")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_channel(
@@ -43,7 +43,7 @@ class YouTube(commands.Cog):
         youtube_channel: str,
         discord_channel: discord.TextChannel,
         role: discord.Role = None,
-        message: str = "📺 {title}\n{url}"
+        message: str = "📢 {title}\n{url}"
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -64,7 +64,7 @@ class YouTube(commands.Cog):
 
         await interaction.followup.send("✅ YouTube channel added (Videos + Shorts + Live)!")
 
-    # ---------------- REMOVE ----------------
+    # ---------------- REMOVE CHANNEL ----------------
     @app_commands.command(name="remove_channel", description="Remove YouTube alert")
     @app_commands.checks.has_permissions(administrator=True)
     async def remove_channel(self, interaction: discord.Interaction, youtube_channel: str):
@@ -79,7 +79,7 @@ class YouTube(commands.Cog):
 
         await interaction.followup.send("✅ Channel removed")
 
-    # ---------------- LIST ----------------
+    # ---------------- LIST CHANNELS ----------------
     @app_commands.command(name="list_channels", description="List YouTube alert channels")
     async def list_channels(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -100,7 +100,10 @@ class YouTube(commands.Cog):
     # ---------------- TEST ----------------
     @app_commands.command(name="youtube_test", description="Test YouTube alert system")
     async def youtube_test(self, interaction: discord.Interaction):
-        await interaction.response.send_message("✅ YouTube alert system is running!", ephemeral=True)
+        await interaction.response.send_message(
+            "✅ YouTube alert system is running!",
+            ephemeral=True
+        )
 
     # ---------------- LOOP ----------------
     @tasks.loop(minutes=CHECK_INTERVAL)
@@ -145,17 +148,17 @@ class YouTube(commands.Cog):
             text = custom_msg.replace("{title}", title).replace("{url}", url)
 
             if vtype == "live":
-                title_text = "🔴 LIVE NOW!"
+                embed_title = "🔴 LIVE NOW!"
                 color = discord.Color.red()
             elif vtype == "short":
-                title_text = "🎬 New Short!"
+                embed_title = "🎬 New Short!"
                 color = discord.Color.orange()
             else:
-                title_text = "📺 New Video"
+                embed_title = "📺 New Video"
                 color = discord.Color.blue()
 
             embed = discord.Embed(
-                title=title_text,
+                title=embed_title,
                 description=text,
                 color=color
             )
@@ -170,7 +173,7 @@ class YouTube(commands.Cog):
                 await db.commit()
 
     # ---------------- FETCH VIDEO ----------------
-    async def fetch_latest_video(self, channel_id):
+    async def fetch_latest_video(self, channel_id: str):
         url = (
             "https://www.googleapis.com/youtube/v3/search"
             f"?part=snippet&channelId={channel_id}"
@@ -195,9 +198,11 @@ class YouTube(commands.Cog):
         if broadcast == "live":
             vtype = "live"
         else:
-            # Shorts detection (duration < 60s using URL format)
-            title = item["snippet"]["title"]
-            vtype = "short" if "#short" in title.lower() or "short" in title.lower() else "video"
+            title = item["snippet"]["title"].lower()
+            if "short" in title or "#short" in title:
+                vtype = "short"
+            else:
+                vtype = "video"
 
         return {
             "id": vid,
@@ -212,5 +217,6 @@ class YouTube(commands.Cog):
         await setup_db()
 
 
+# ================= SETUP =================
 async def setup(bot: commands.Bot):
     await bot.add_cog(YouTube(bot))
