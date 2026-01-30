@@ -8,7 +8,7 @@ import re
 
 DB_NAME = "bot.db"
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CHECK_INTERVAL = 30  # seconds (fast live detection)
+CHECK_INTERVAL = 10  # seconds (fast live detection)
 
 
 # =========================
