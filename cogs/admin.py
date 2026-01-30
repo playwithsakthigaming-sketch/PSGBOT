@@ -1,24 +1,41 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
 
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.status_index = 0
+        self.status_list = [
+            discord.Game(name="PsgFamily"),  # Playing
+            discord.Activity(type=discord.ActivityType.watching, name="Moderation")
+        ]
 
     # ========================
-    # BOT READY STATUS
+    # START STATUS LOOP
     # ========================
     @commands.Cog.listener()
     async def on_ready(self):
-        await self.bot.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name="Moderation"
-            )
-        )
-        print("✅ Admin Cog Ready | Status set")
+        if not self.status_loop.is_running():
+            self.status_loop.start()
+            print("✅ Status loop started (every 30s)")
+
+    # ========================
+    # STATUS LOOP
+    # ========================
+    @tasks.loop(seconds=30)
+    async def status_loop(self):
+        activity = self.status_list[self.status_index]
+        await self.bot.change_presence(activity=activity)
+
+        self.status_index += 1
+        if self.status_index >= len(self.status_list):
+            self.status_index = 0
+
+    @status_loop.before_loop
+    async def before_status_loop(self):
+        await self.bot.wait_until_ready()
 
     # ========================
     # /ping
@@ -55,19 +72,11 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ========================
-    # /setstatus
+    # /setstatus (manual override)
     # ========================
-    @app_commands.command(name="setstatus", description="🤖 Set bot activity status")
+    @app_commands.command(name="setstatus", description="🤖 Set bot activity status manually")
     @app_commands.checks.has_permissions(administrator=True)
-    async def setstatus(
-        self,
-        interaction: discord.Interaction,
-        mode: str,
-        text: str
-    ):
-        """
-        mode = playing / watching / listening
-        """
+    async def setstatus(self, interaction: discord.Interaction, mode: str, text: str):
         await interaction.response.defer(ephemeral=True)
 
         mode = mode.lower()
@@ -86,7 +95,7 @@ class Admin(commands.Cog):
 
         await self.bot.change_presence(activity=activity)
         await interaction.followup.send(
-            f"✅ Bot status updated to **{mode} {text}**",
+            f"✅ Bot status set to **{mode} {text}**",
             ephemeral=True
         )
 
