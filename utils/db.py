@@ -121,7 +121,7 @@ async def init_db():
         """)
 
         # ================= PRODUCTS =================
-awit db.execute("""
+await db.execute("""
 CREATE TABLE IF NOT EXISTS shop_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
