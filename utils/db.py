@@ -120,16 +120,18 @@ async def init_db():
         )
         """)
 
-        # ================= COUPONS =================
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS coupons (
-            code TEXT PRIMARY KEY,
-            type TEXT,
-            value INTEGER,
-            max_uses INTEGER,
-            used INTEGER DEFAULT 0,
-            expires INTEGER
-        )
+        # ================= PRODUCTS =================
+awit db.execute("""
+CREATE TABLE IF NOT EXISTS shop_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    price INTEGER,
+    stock INTEGER,
+    image_url TEXT,
+    category_id INTEGER,
+    product_link TEXT,
+    FOREIGN KEY(category_id) REFERENCES shop_categories(id)
+)
         """)
 
         # ================= SHOP CATEGORIES =================
