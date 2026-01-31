@@ -152,24 +152,28 @@ async def init_db():
         )
         """)
 
-        # ================= CARTS =================
+        # ================= USER LINKS (AUTO GENERATED) =================
         await db.execute("""
-        CREATE TABLE IF NOT EXISTS carts (
+        CREATE TABLE IF NOT EXISTS user_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             item_id INTEGER,
-            quantity INTEGER
+            link TEXT,
+            expires INTEGER,
+            used INTEGER DEFAULT 0
         )
         """)
 
-        # ================= ORDERS =================
+        # ================= ORDERS (UPDATED WITH ITEM NAME) =================
         await db.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
+            item_name TEXT,
             total INTEGER,
             timestamp INTEGER
         )
         """)
 
         await db.commit()
-        print("✅ Database checked & updated (including shop system)")
+        print("✅ Database checked & updated (shop + user links system ready)")
