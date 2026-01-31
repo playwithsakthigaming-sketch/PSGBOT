@@ -47,6 +47,7 @@ class PaymentConfirmView(discord.ui.View):
     @discord.ui.button(label="✅ Confirm Payment", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
 
+        # Only the buyer can confirm
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message(
                 "❌ This payment is not for you.", ephemeral=True
@@ -58,6 +59,8 @@ class PaymentConfirmView(discord.ui.View):
             )
 
         self.used = True
+
+        # ACK interaction immediately (prevents interaction failed)
         await interaction.response.defer(ephemeral=True)
 
         async with aiosqlite.connect(DB_NAME) as db:
@@ -72,16 +75,19 @@ class PaymentConfirmView(discord.ui.View):
 
             link = row[1]
 
+            # Deduct coins
             await db.execute(
                 "UPDATE coins SET balance = balance - ? WHERE user_id=?",
                 (self.final_price, interaction.user.id)
             )
 
+            # Reduce stock
             await db.execute(
                 "UPDATE shop_items SET stock = stock - 1 WHERE id=?",
                 (self.item_id,)
             )
 
+            # Save order
             await db.execute("""
             INSERT INTO orders (user_id, item_name, total, timestamp)
             VALUES (?,?,?,?)
@@ -89,7 +95,7 @@ class PaymentConfirmView(discord.ui.View):
 
             await db.commit()
 
-        # Send DM
+        # Send DM with user mention
         try:
             dm_msg = await interaction.user.send(
                 f"🎉 {interaction.user.mention} **Purchase Successful!**\n\n"
@@ -102,6 +108,7 @@ class PaymentConfirmView(discord.ui.View):
         except:
             pass
 
+        # Disable button and edit original message to thank-you message
         for child in self.children:
             child.disabled = True
 
@@ -116,7 +123,7 @@ class PaymentConfirmView(discord.ui.View):
             color=discord.Color.green()
         )
 
-        await interaction.followup.send(embed=thank_embed, ephemeral=True)
+        await interaction.edit_original_response(embed=thank_embed, view=None)
 
 
 # ================= BUY MODAL =================
