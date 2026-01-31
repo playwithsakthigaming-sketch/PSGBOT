@@ -36,7 +36,8 @@ COGS = [
     "cogs.moderation",
     "cogs.coupons",
     "cogs.backup",
-    "cogs.admin",
+    "cogs.admin", 
+    "cogs.shop", 
     "cogs.youtube"
 ]
 
