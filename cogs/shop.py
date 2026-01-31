@@ -179,12 +179,12 @@ class BuyModal(discord.ui.Modal, title="🛒 Purchase Form"):
             bal = await cur.fetchone()
             balance = bal[0] if bal else 0
 
+            # ✅ FIX: Not enough coins is now ephemeral=True
             if balance < final_price:
-    return await interaction.followup.send(
-        f"❌ Not enough coins. Need {final_price} coins.",
-        ephemeral=True
-    )
-
+                return await interaction.followup.send(
+                    f"❌ Not enough coins. Need {final_price} coins.",
+                    ephemeral=True
+                )
         embed = discord.Embed(
             title="💳 Payment Details",
             description=(
