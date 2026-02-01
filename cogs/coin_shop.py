@@ -17,7 +17,7 @@ PREMIUM_ROLE_IDS = {
     "gold": 1463884209025187880
 }
 
-LOGO_URL = "https://files.catbox.moe/c1lm6g.png"
+LOGO_URL = "https://files.catbox.moe/mrpfrf.webp"
 
 
 # ================= PREMIUM INVOICE IMAGE =================
