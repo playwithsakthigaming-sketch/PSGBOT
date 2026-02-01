@@ -17,7 +17,7 @@ PREMIUM_ROLE_IDS = {
     "gold": 1463884209025187880
 }
 
-LOGO_URL = "https://media.discordapp.net/attachments/1116720480544636999/1465307326985535520/Untitled_design.png?ex=6978a14a&is=69774fca&hm=3554648e7b48a65b29082a3b4611787d16cebc668cc35618c0c16c19a2f304d2&=&format=webp&quality=lossless&width=1202&height=676"
+LOGO_URL = "https://files.catbox.moe/c1lm6g.png"
 
 
 # ================= PREMIUM INVOICE IMAGE =================
