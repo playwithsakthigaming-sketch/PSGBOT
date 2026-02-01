@@ -5,7 +5,10 @@ import datetime
 import random
 import asyncio
 
-CHANGELOG_CHANNEL_NAME = "changelog"
+# ========================
+# CONFIG
+# ========================
+CHANGELOG_CHANNEL_ID = 1415142396341256275  # <-- PUT YOUR CHANGELOG CHANNEL ID HERE
 
 
 # ========================
@@ -125,10 +128,10 @@ class Admin(commands.Cog):
         self.status_index = (self.status_index + 1) % len(self.status_list)
 
     # ========================
-    # CHANGELOG LOGGER
+    # CHANGELOG LOGGER (BY ID)
     # ========================
-    async def send_changelog(self, guild: discord.Guild, embed: discord.Embed):
-        channel = discord.utils.get(guild.text_channels, name=CHANGELOG_CHANNEL_NAME)
+    async def send_changelog(self, embed: discord.Embed):
+        channel = self.bot.get_channel(CHANGELOG_CHANNEL_ID)
         if channel:
             await channel.send(embed=embed)
 
@@ -188,13 +191,14 @@ class Admin(commands.Cog):
                 await msg.add_reaction(emojis[i])
 
     # ========================
-    # SELF ROLE
+    # SELF ROLE (WITH CHANNEL)
     # ========================
     @app_commands.command(name="selfrole", description="🎭 Create self role buttons")
     @app_commands.checks.has_permissions(administrator=True)
     async def selfrole(
         self,
         interaction: discord.Interaction,
+        channel: discord.TextChannel,
         role1: discord.Role,
         role2: discord.Role = None,
         role3: discord.Role = None,
@@ -209,16 +213,20 @@ class Admin(commands.Cog):
         )
 
         view = SelfRoleView(roles)
-        await interaction.response.send_message(embed=embed, view=view)
+        await channel.send(embed=embed, view=view)
+        await interaction.response.send_message(
+            f"✅ Self role panel sent to {channel.mention}", ephemeral=True
+        )
 
     # ========================
-    # START GIVEAWAY
+    # START GIVEAWAY (WITH CHANNEL)
     # ========================
     @app_commands.command(name="giveaway", description="🎁 Start an advanced giveaway")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def giveaway(
         self,
         interaction: discord.Interaction,
+        channel: discord.TextChannel,
         prize: str,
         minutes: int,
         winners: int = 1
@@ -235,15 +243,18 @@ class Admin(commands.Cog):
         embed.add_field(name="Ends In", value=f"{minutes} minutes", inline=False)
         embed.set_footer(text=f"Hosted by {interaction.user}")
 
-        await interaction.response.send_message(embed=embed, view=view)
-        msg = await interaction.original_response()
+        msg = await channel.send(embed=embed, view=view)
 
         self.giveaways[msg.id] = {
             "view": view,
             "prize": prize,
             "winners": winners,
-            "channel": interaction.channel.id
+            "channel": channel.id
         }
+
+        await interaction.response.send_message(
+            f"✅ Giveaway started in {channel.mention}", ephemeral=True
+        )
 
         await asyncio.sleep(minutes * 60)
         await self.finish_giveaway(msg.id)
@@ -257,7 +268,6 @@ class Admin(commands.Cog):
             return
 
         channel = self.bot.get_channel(data["channel"])
-        message = await channel.fetch_message(message_id)
         view = data["view"]
 
         if len(view.participants) == 0:
@@ -327,7 +337,7 @@ class Admin(commands.Cog):
         embed.add_field(name="By", value=interaction.user.mention)
         embed.add_field(name="Reason", value=reason)
 
-        await self.send_changelog(interaction.guild, embed)
+        await self.send_changelog(embed)
         await channel.delete(reason=reason)
 
     # ========================
