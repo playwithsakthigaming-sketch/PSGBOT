@@ -2,18 +2,13 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
-import aiosqlite
-import os
-import sys
-import time
-import aiohttp
+import os, sys, time, aiohttp
 
-DB_NAME = "bot.db"
 START_TIME = time.time()
-
+CHANGELOG_CHANNEL_NAME = "changelog"  # create this channel in your server
 
 # ========================
-# SERVER STATUS VIEW (Buttons)
+# SERVER STATUS VIEW
 # ========================
 class ServerStatusView(discord.ui.View):
     def __init__(self, guild: discord.Guild):
@@ -33,7 +28,6 @@ class ServerStatusView(discord.ui.View):
         embed.add_field(name="Online", value=online, inline=True)
         embed.add_field(name="Channels", value=len(self.guild.channels), inline=True)
         embed.add_field(name="Roles", value=len(self.guild.roles), inline=True)
-        embed.add_field(name="Boost Level", value=self.guild.premium_tier, inline=True)
 
         if self.guild.icon:
             embed.set_thumbnail(url=self.guild.icon.url)
@@ -61,7 +55,7 @@ class Admin(commands.Cog):
         ]
 
     # ========================
-    # BOT READY
+    # READY
     # ========================
     @commands.Cog.listener()
     async def on_ready(self):
@@ -85,118 +79,57 @@ class Admin(commands.Cog):
     # ========================
     # /ping
     # ========================
-    @app_commands.command(name="ping", description="<a:psg:1467378607025557817> Check bot latency")
+    @app_commands.command(name="ping", description="Check bot latency")
     async def ping(self, interaction: discord.Interaction):
         latency = round(self.bot.latency * 1000)
-        await interaction.response.send_message(f"<a:psg:1467378607025557817> Pong! `{latency}ms`", ephemeral=True)
+        await interaction.response.send_message(f"🏓 Pong! `{latency}ms`", ephemeral=True)
 
     # ========================
-    # /serverstatus (buttons)
+    # /serverstatus
     # ========================
-    @app_commands.command(name="serverstatus", description="📊 Show server status with buttons")
+    @app_commands.command(name="serverstatus", description="Show server status with buttons")
     async def serverstatus(self, interaction: discord.Interaction):
         view = ServerStatusView(interaction.guild)
         embed = view.get_embed()
         await interaction.response.send_message(embed=embed, view=view)
 
     # ========================
-    # /restart
+    # CHANGELOG LOGGER
     # ========================
-    @app_commands.command(name="restart", description="♻ Restart the bot")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def restart(self, interaction: discord.Interaction):
-        await interaction.response.send_message("♻ Restarting bot...", ephemeral=True)
-        os.execv(sys.executable, ["python"] + sys.argv)
+    async def send_changelog(self, guild: discord.Guild, embed: discord.Embed):
+        channel = discord.utils.get(guild.text_channels, name=CHANGELOG_CHANNEL_NAME)
+        if channel:
+            await channel.send(embed=embed)
 
     # ========================
-    # /addemoji (FIXED)
+    # /delete_channel
     # ========================
-    @app_commands.command(name="addemoji", description="😀 Add emoji using file, text or URL")
-    @app_commands.checks.has_permissions(manage_emojis=True)
-    async def addemoji(
+    @app_commands.command(name="delete_channel", description="🗑 Delete a channel and log it")
+    @app_commands.checks.has_permissions(manage_channels=True)
+    async def delete_channel(
         self,
         interaction: discord.Interaction,
-        name: str,
-        file: discord.Attachment = None,
-        text: str = None,
-        url: str = None
+        channel: discord.TextChannel = None,
+        reason: str = "No reason provided"
     ):
         await interaction.response.defer(ephemeral=True)
 
-        if not file and not text and not url:
-            return await interaction.followup.send(
-                "❌ Please provide one of: **file / text / url**",
-                ephemeral=True
-            )
+        channel = channel or interaction.channel
 
-        image_bytes = None
+        embed = discord.Embed(
+            title="📜 Channel Deleted",
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="Channel", value=channel.name, inline=False)
+        embed.add_field(name="Deleted By", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Reason", value=reason, inline=False)
 
-        try:
-            # From file
-            if file:
-                if not file.content_type or not file.content_type.startswith("image"):
-                    return await interaction.followup.send(
-                        "❌ File must be an image (PNG/JPG/GIF)",
-                        ephemeral=True
-                    )
-                image_bytes = await file.read()
+        await self.send_changelog(interaction.guild, embed)
 
-            # From custom emoji text
-            elif text:
-                emoji = discord.PartialEmoji.from_str(text)
-                if not emoji or not emoji.id:
-                    return await interaction.followup.send(
-                        "❌ Text must be custom emoji like <:name:id> or <a:name:id>",
-                        ephemeral=True
-                    )
+        await channel.delete(reason=f"{interaction.user} - {reason}")
 
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(str(emoji.url)) as resp:
-                        if resp.status != 200:
-                            return await interaction.followup.send(
-                                "❌ Failed to download emoji image",
-                                ephemeral=True
-                            )
-                        image_bytes = await resp.read()
-
-            # From URL
-            elif url:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url) as resp:
-                        if resp.status != 200:
-                            return await interaction.followup.send(
-                                "❌ Invalid image URL",
-                                ephemeral=True
-                            )
-                        image_bytes = await resp.read()
-
-            # Create emoji (supports GIF)
-            new_emoji = await interaction.guild.create_custom_emoji(
-                name=name,
-                image=image_bytes,
-                reason=f"Added by {interaction.user}"
-            )
-
-            await interaction.followup.send(
-                f"✅ Emoji added successfully! {new_emoji}",
-                ephemeral=True
-            )
-
-        except discord.Forbidden:
-            await interaction.followup.send(
-                "❌ I don't have permission to manage emojis.",
-                ephemeral=True
-            )
-        except discord.HTTPException as e:
-            await interaction.followup.send(
-                f"❌ Discord error: {e}",
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.followup.send(
-                f"❌ Failed to add emoji: {e}",
-                ephemeral=True
-            )
+        await interaction.followup.send("✅ Channel deleted and logged in changelog.", ephemeral=True)
 
     # ========================
     # CLEAR CHAT
