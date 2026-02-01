@@ -6,6 +6,7 @@ import aiosqlite
 import os
 import sys
 import time
+import aiohttp
 
 DB_NAME = "bot.db"
 START_TIME = time.time()
@@ -188,63 +189,65 @@ class Admin(commands.Cog):
         await interaction.followup.send(f"✅ Sent DM to {count} members", ephemeral=True)
 
     # ========================
-    # /addemoji
+    # /addemoji (file OR text OR url)
     # ========================
-    @app_commands.command(name="addemoji", description="😀 Upload an emoji to the server")
+    @app_commands.command(name="addemoji", description="😀 Add emoji using file, text or URL")
     @app_commands.checks.has_permissions(manage_emojis=True)
-    async def addemoji(self, interaction: discord.Interaction, name: str, emoji: discord.Attachment):
+    async def addemoji(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        file: discord.Attachment = None,
+        text: str = None,
+        url: str = None
+    ):
         await interaction.response.defer(ephemeral=True)
 
-        if not emoji.content_type.startswith("image"):
-            return await interaction.followup.send("❌ Please upload a valid image (PNG/JPG/GIF)", ephemeral=True)
+        if not file and not text and not url:
+            return await interaction.followup.send(
+                "❌ Please provide one of: **file / text / url**",
+                ephemeral=True
+            )
+
+        image_bytes = None
 
         try:
-            image_bytes = await emoji.read()
+            # From attachment
+            if file:
+                if not file.content_type.startswith("image"):
+                    return await interaction.followup.send("❌ File must be an image (PNG/JPG/GIF)", ephemeral=True)
+                image_bytes = await file.read()
+
+            # From custom emoji text
+            elif text:
+                if text.startswith("<") and text.endswith(">"):
+                    emoji = await commands.EmojiConverter().convert(interaction, text)
+                    image_bytes = await emoji.read()
+                else:
+                    return await interaction.followup.send(
+                        "❌ Text must be a custom emoji like <:name:id> or <a:name:id>",
+                        ephemeral=True
+                    )
+
+            # From URL
+            elif url:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        if resp.status != 200:
+                            return await interaction.followup.send("❌ Invalid image URL", ephemeral=True)
+                        image_bytes = await resp.read()
 
             new_emoji = await interaction.guild.create_custom_emoji(
                 name=name,
                 image=image_bytes
             )
 
-            await interaction.followup.send(
-                f"✅ Emoji uploaded successfully! {new_emoji}",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"✅ Emoji added successfully! {new_emoji}", ephemeral=True)
 
         except discord.Forbidden:
             await interaction.followup.send("❌ I don't have permission to manage emojis.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to upload emoji: {e}", ephemeral=True)
-
-    # ========================
-    # CHANNEL MANAGEMENT
-    # ========================
-    @app_commands.command(name="create_channel", description="➕ Create a new channel")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def create_channel(self, interaction: discord.Interaction, name: str, channel_type: str):
-        await interaction.response.defer(ephemeral=True)
-        guild = interaction.guild
-        channel_type = channel_type.lower()
-
-        if channel_type == "text":
-            channel = await guild.create_text_channel(name)
-        elif channel_type == "voice":
-            channel = await guild.create_voice_channel(name)
-        elif channel_type == "forum":
-            channel = await guild.create_forum_channel(name)
-        elif channel_type == "stage":
-            channel = await guild.create_stage_channel(name)
-        else:
-            return await interaction.followup.send("❌ channel_type must be: text / voice / forum / stage", ephemeral=True)
-
-        await interaction.followup.send(f"✅ Channel created: {channel.mention}", ephemeral=True)
-
-    @app_commands.command(name="delete_channel", description="🗑 Delete a channel")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def delete_channel(self, interaction: discord.Interaction, channel: discord.abc.GuildChannel):
-        await interaction.response.defer(ephemeral=True)
-        await channel.delete()
-        await interaction.followup.send("✅ Channel deleted", ephemeral=True)
+            await interaction.followup.send(f"❌ Failed to add emoji: {e}", ephemeral=True)
 
     # ========================
     # CLEAR CHAT
