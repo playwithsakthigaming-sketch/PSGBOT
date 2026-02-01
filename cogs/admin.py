@@ -8,7 +8,7 @@ import asyncio
 # ========================
 # CONFIG
 # ========================
-CHANGELOG_CHANNEL_ID = 1415142396341256275  # <-- PUT YOUR CHANGELOG CHANNEL ID HERE
+CHANGELOG_CHANNEL_ID = 123456789012345678  # PUT YOUR CHANGELOG CHANNEL ID HERE
 
 
 # ========================
@@ -108,23 +108,15 @@ class Admin(commands.Cog):
             discord.Game(name="Play With Sakthi Gaming"),
         ]
 
-    # ========================
-    # READY
-    # ========================
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.status_loop.is_running():
             self.status_loop.start()
             print("✅ Admin Cog Loaded")
 
-    # ========================
-    # STATUS LOOP
-    # ========================
     @tasks.loop(seconds=15)
     async def status_loop(self):
-        await self.bot.change_presence(
-            activity=self.status_list[self.status_index]
-        )
+        await self.bot.change_presence(activity=self.status_list[self.status_index])
         self.status_index = (self.status_index + 1) % len(self.status_list)
 
     # ========================
@@ -153,45 +145,7 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view)
 
     # ========================
-    # POLL SYSTEM
-    # ========================
-    @app_commands.command(name="poll", description="📊 Create a poll")
-    async def poll(
-        self,
-        interaction: discord.Interaction,
-        question: str,
-        option1: str,
-        option2: str,
-        option3: str = None,
-        option4: str = None,
-    ):
-        embed = discord.Embed(
-            title="📊 Poll",
-            description=question,
-            color=discord.Color.blue(),
-            timestamp=datetime.datetime.utcnow()
-        )
-
-        options = [option1, option2, option3, option4]
-        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
-
-        text = ""
-        for i, opt in enumerate(options):
-            if opt:
-                text += f"{emojis[i]} {opt}\n"
-
-        embed.add_field(name="Options", value=text, inline=False)
-        embed.set_footer(text=f"Poll by {interaction.user}")
-
-        await interaction.response.send_message(embed=embed)
-        msg = await interaction.original_response()
-
-        for i, opt in enumerate(options):
-            if opt:
-                await msg.add_reaction(emojis[i])
-
-    # ========================
-    # SELF ROLE (WITH CHANNEL)
+    # SELF ROLE (WITH CHANNEL + IMAGE)
     # ========================
     @app_commands.command(name="selfrole", description="🎭 Create self role buttons")
     @app_commands.checks.has_permissions(administrator=True)
@@ -199,6 +153,7 @@ class Admin(commands.Cog):
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
+        imageurl: str,
         role1: discord.Role,
         role2: discord.Role = None,
         role3: discord.Role = None,
@@ -211,15 +166,17 @@ class Admin(commands.Cog):
             description="Click buttons to get/remove roles",
             color=discord.Color.purple()
         )
+        embed.set_image(url=imageurl)
 
         view = SelfRoleView(roles)
         await channel.send(embed=embed, view=view)
+
         await interaction.response.send_message(
             f"✅ Self role panel sent to {channel.mention}", ephemeral=True
         )
 
     # ========================
-    # START GIVEAWAY (WITH CHANNEL)
+    # START GIVEAWAY (WITH CHANNEL + IMAGE)
     # ========================
     @app_commands.command(name="giveaway", description="🎁 Start an advanced giveaway")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -229,7 +186,8 @@ class Admin(commands.Cog):
         channel: discord.TextChannel,
         prize: str,
         minutes: int,
-        winners: int = 1
+        winners: int = 1,
+        imageurl: str = None
     ):
         view = GiveawayView()
 
@@ -242,6 +200,9 @@ class Admin(commands.Cog):
         embed.add_field(name="Winners", value=str(winners), inline=False)
         embed.add_field(name="Ends In", value=f"{minutes} minutes", inline=False)
         embed.set_footer(text=f"Hosted by {interaction.user}")
+
+        if imageurl:
+            embed.set_image(url=imageurl)
 
         msg = await channel.send(embed=embed, view=view)
 
