@@ -29,8 +29,6 @@ def get_font(size: int):
     return ImageFont.truetype(FONT_PATH, size)
 
 # ================= INVOICE CONFIG =================
-SHOW_GRID = False
-
 INVOICE_TEXT_CONFIG = {
     "invoice_id": {"x":152,"y":525,"fontSize":25},
     "date": {"x":675,"y":525,"fontSize":25},
@@ -52,12 +50,6 @@ def load_invoice_background():
 def generate_invoice(username, rupees, coins):
     img = load_invoice_background()
     draw = ImageDraw.Draw(img)
-
-    if SHOW_GRID:
-        for x in range(0,1080,50):
-            draw.line((x,0,x,1080),(60,60,60))
-        for y in range(0,1080,50):
-            draw.line((0,y,1080,y),(60,60,60))
 
     invoice_id = f"PSG-{random.randint(10000,99999)}"
     date = time.strftime("%d/%m/%Y")
@@ -108,12 +100,10 @@ class PaymentPanelView(discord.ui.View):
 
         guild = interaction.guild
 
-        # ✅ Create category if not exists
         category = discord.utils.get(guild.categories, name=PAYMENT_CATEGORY)
         if not category:
             category = await guild.create_category(PAYMENT_CATEGORY)
 
-        # ✅ Channel permissions
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
@@ -216,38 +206,6 @@ class Payment(commands.Cog):
         await interaction.followup.send(
             f"✅ Added **{coins} coins** to {member.mention}"
         )
-
-    # -------- PREVIEW --------
-    @app_commands.command(name="invoice_preview")
-    async def invoice_preview(self, interaction: discord.Interaction):
-        img = generate_invoice(interaction.user.name, 100, 300)
-        await interaction.response.send_message(
-            file=discord.File(img, "preview.png"),
-            ephemeral=True
-        )
-
-    # -------- EDIT --------
-    @app_commands.command(name="invoice_edit")
-    async def invoice_edit(self, interaction: discord.Interaction, field: str, x: int, y: int, size: int):
-        if field not in INVOICE_TEXT_CONFIG:
-            return await interaction.response.send_message("Invalid field", ephemeral=True)
-
-        INVOICE_TEXT_CONFIG[field]["x"] = x
-        INVOICE_TEXT_CONFIG[field]["y"] = y
-        INVOICE_TEXT_CONFIG[field]["fontSize"] = size
-
-        await interaction.response.send_message(
-            f"✅ {field} updated to x={x}, y={y}, size={size}",
-            ephemeral=True
-        )
-
-    # -------- GRID --------
-    @app_commands.command(name="invoice_grid")
-    async def invoice_grid(self, interaction: discord.Interaction, show: bool):
-        global SHOW_GRID
-        SHOW_GRID = show
-        await interaction.response.send_message(f"Grid = {show}", ephemeral=True)
-
 
 # ================= SETUP =================
 async def setup(bot: commands.Bot):
