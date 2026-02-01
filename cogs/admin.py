@@ -2,10 +2,11 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
-import os, sys, time, aiohttp
+import random
+import asyncio
 
-START_TIME = time.time()
-CHANGELOG_CHANNEL_NAME = "changelog"  # create this channel in your server
+CHANGELOG_CHANNEL_NAME = "changelog"
+
 
 # ========================
 # SERVER STATUS VIEW
@@ -36,22 +37,72 @@ class ServerStatusView(discord.ui.View):
 
     @discord.ui.button(label="Refresh", style=discord.ButtonStyle.green, emoji="🔄")
     async def refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = self.get_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
     @discord.ui.button(label="Remove", style=discord.ButtonStyle.red, emoji="🗑")
     async def remove(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.message.delete()
 
 
+# ========================
+# SELF ROLE SYSTEM
+# ========================
+class SelfRoleButton(discord.ui.Button):
+    def __init__(self, role: discord.Role):
+        super().__init__(label=role.name, style=discord.ButtonStyle.primary)
+        self.role = role
+
+    async def callback(self, interaction: discord.Interaction):
+        member = interaction.user
+        if self.role in member.roles:
+            await member.remove_roles(self.role)
+            await interaction.response.send_message(
+                f"❌ Removed role **{self.role.name}**", ephemeral=True
+            )
+        else:
+            await member.add_roles(self.role)
+            await interaction.response.send_message(
+                f"✅ You received role **{self.role.name}**", ephemeral=True
+            )
+
+
+class SelfRoleView(discord.ui.View):
+    def __init__(self, roles):
+        super().__init__(timeout=None)
+        for role in roles:
+            self.add_item(SelfRoleButton(role))
+
+
+# ========================
+# GIVEAWAY VIEW
+# ========================
+class GiveawayView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.participants = set()
+
+    @discord.ui.button(label="Join Giveaway", style=discord.ButtonStyle.green, emoji="🎉")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in self.participants:
+            await interaction.response.send_message("❌ You already joined!", ephemeral=True)
+            return
+
+        self.participants.add(interaction.user.id)
+        await interaction.response.send_message("✅ You joined the giveaway!", ephemeral=True)
+
+
+# ========================
+# ADMIN COG
+# ========================
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.status_index = 0
+        self.giveaways = {}
+
         self.status_list = [
-            discord.Game(name="Watching moderation and activity"),
-            discord.Activity(type=discord.ActivityType.watching, name="premium member security"),
-            discord.Game(name="Playing Play With Sakthi Gaming")
+            discord.Game(name="Watching moderation"),
+            discord.Game(name="Play With Sakthi Gaming"),
         ]
 
     # ========================
@@ -61,37 +112,17 @@ class Admin(commands.Cog):
     async def on_ready(self):
         if not self.status_loop.is_running():
             self.status_loop.start()
-            print("✅ Status rotation started")
+            print("✅ Admin Cog Loaded")
 
     # ========================
     # STATUS LOOP
     # ========================
-    @tasks.loop(seconds=10)
+    @tasks.loop(seconds=15)
     async def status_loop(self):
-        activity = self.status_list[self.status_index]
-        await self.bot.change_presence(activity=activity)
+        await self.bot.change_presence(
+            activity=self.status_list[self.status_index]
+        )
         self.status_index = (self.status_index + 1) % len(self.status_list)
-
-    @status_loop.before_loop
-    async def before_status_loop(self):
-        await self.bot.wait_until_ready()
-
-    # ========================
-    # /ping
-    # ========================
-    @app_commands.command(name="ping", description="Check bot latency")
-    async def ping(self, interaction: discord.Interaction):
-        latency = round(self.bot.latency * 1000)
-        await interaction.response.send_message(f"🏓 Pong! `{latency}ms`", ephemeral=True)
-
-    # ========================
-    # /serverstatus
-    # ========================
-    @app_commands.command(name="serverstatus", description="Show server status with buttons")
-    async def serverstatus(self, interaction: discord.Interaction):
-        view = ServerStatusView(interaction.guild)
-        embed = view.get_embed()
-        await interaction.response.send_message(embed=embed, view=view)
 
     # ========================
     # CHANGELOG LOGGER
@@ -102,34 +133,202 @@ class Admin(commands.Cog):
             await channel.send(embed=embed)
 
     # ========================
-    # /delete_channel
+    # /ping
     # ========================
-    @app_commands.command(name="delete_channel", description="🗑 Delete a channel and log it")
-    @app_commands.checks.has_permissions(manage_channels=True)
-    async def delete_channel(
+    @app_commands.command(name="ping", description="Check bot latency")
+    async def ping(self, interaction: discord.Interaction):
+        latency = round(self.bot.latency * 1000)
+        await interaction.response.send_message(f"🏓 Pong `{latency}ms`", ephemeral=True)
+
+    # ========================
+    # /serverstatus
+    # ========================
+    @app_commands.command(name="serverstatus", description="Show server status")
+    async def serverstatus(self, interaction: discord.Interaction):
+        view = ServerStatusView(interaction.guild)
+        embed = view.get_embed()
+        await interaction.response.send_message(embed=embed, view=view)
+
+    # ========================
+    # POLL SYSTEM
+    # ========================
+    @app_commands.command(name="poll", description="📊 Create a poll")
+    async def poll(
         self,
         interaction: discord.Interaction,
-        channel: discord.TextChannel = None,
-        reason: str = "No reason provided"
+        question: str,
+        option1: str,
+        option2: str,
+        option3: str = None,
+        option4: str = None,
     ):
-        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(
+            title="📊 Poll",
+            description=question,
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.utcnow()
+        )
 
-        channel = channel or interaction.channel
+        options = [option1, option2, option3, option4]
+        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+
+        text = ""
+        for i, opt in enumerate(options):
+            if opt:
+                text += f"{emojis[i]} {opt}\n"
+
+        embed.add_field(name="Options", value=text, inline=False)
+        embed.set_footer(text=f"Poll by {interaction.user}")
+
+        await interaction.response.send_message(embed=embed)
+        msg = await interaction.original_response()
+
+        for i, opt in enumerate(options):
+            if opt:
+                await msg.add_reaction(emojis[i])
+
+    # ========================
+    # SELF ROLE
+    # ========================
+    @app_commands.command(name="selfrole", description="🎭 Create self role buttons")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def selfrole(
+        self,
+        interaction: discord.Interaction,
+        role1: discord.Role,
+        role2: discord.Role = None,
+        role3: discord.Role = None,
+        role4: discord.Role = None,
+    ):
+        roles = [r for r in [role1, role2, role3, role4] if r]
+
+        embed = discord.Embed(
+            title="🎭 Choose Your Role",
+            description="Click buttons to get/remove roles",
+            color=discord.Color.purple()
+        )
+
+        view = SelfRoleView(roles)
+        await interaction.response.send_message(embed=embed, view=view)
+
+    # ========================
+    # START GIVEAWAY
+    # ========================
+    @app_commands.command(name="giveaway", description="🎁 Start an advanced giveaway")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def giveaway(
+        self,
+        interaction: discord.Interaction,
+        prize: str,
+        minutes: int,
+        winners: int = 1
+    ):
+        view = GiveawayView()
+
+        embed = discord.Embed(
+            title="🎁 Giveaway Started!",
+            color=discord.Color.gold(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="Prize", value=prize, inline=False)
+        embed.add_field(name="Winners", value=str(winners), inline=False)
+        embed.add_field(name="Ends In", value=f"{minutes} minutes", inline=False)
+        embed.set_footer(text=f"Hosted by {interaction.user}")
+
+        await interaction.response.send_message(embed=embed, view=view)
+        msg = await interaction.original_response()
+
+        self.giveaways[msg.id] = {
+            "view": view,
+            "prize": prize,
+            "winners": winners,
+            "channel": interaction.channel.id
+        }
+
+        await asyncio.sleep(minutes * 60)
+        await self.finish_giveaway(msg.id)
+
+    # ========================
+    # FINISH GIVEAWAY
+    # ========================
+    async def finish_giveaway(self, message_id: int):
+        data = self.giveaways.get(message_id)
+        if not data:
+            return
+
+        channel = self.bot.get_channel(data["channel"])
+        message = await channel.fetch_message(message_id)
+        view = data["view"]
+
+        if len(view.participants) == 0:
+            await channel.send("❌ Giveaway ended. No participants.")
+            return
+
+        winners = random.sample(
+            list(view.participants),
+            min(data["winners"], len(view.participants))
+        )
+
+        winner_mentions = ", ".join(f"<@{w}>" for w in winners)
+
+        embed = discord.Embed(
+            title="🎉 Giveaway Ended!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Prize", value=data["prize"], inline=False)
+        embed.add_field(name="Winners", value=winner_mentions, inline=False)
+
+        await channel.send(embed=embed)
+        del self.giveaways[message_id]
+
+    # ========================
+    # END GIVEAWAY
+    # ========================
+    @app_commands.command(name="end_giveaway", description="⏹ End giveaway manually")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def end_giveaway(self, interaction: discord.Interaction, message_id: str):
+        await self.finish_giveaway(int(message_id))
+        await interaction.response.send_message("✅ Giveaway ended.", ephemeral=True)
+
+    # ========================
+    # REROLL GIVEAWAY
+    # ========================
+    @app_commands.command(name="reroll_giveaway", description="🔁 Reroll giveaway")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def reroll_giveaway(self, interaction: discord.Interaction, message_id: str):
+        data = self.giveaways.get(int(message_id))
+        if not data:
+            await interaction.response.send_message("❌ Giveaway not found.", ephemeral=True)
+            return
+
+        view = data["view"]
+
+        if not view.participants:
+            await interaction.response.send_message("❌ No participants.", ephemeral=True)
+            return
+
+        winner = random.choice(list(view.participants))
+        await interaction.response.send_message(f"🎉 New winner: <@{winner}>")
+
+    # ========================
+    # DELETE CHANNEL + CHANGELOG
+    # ========================
+    @app_commands.command(name="delete_channel", description="🗑 Delete channel and log it")
+    @app_commands.checks.has_permissions(manage_channels=True)
+    async def delete_channel(self, interaction: discord.Interaction, reason: str = "No reason"):
+        channel = interaction.channel
 
         embed = discord.Embed(
             title="📜 Channel Deleted",
             color=discord.Color.red(),
             timestamp=datetime.datetime.utcnow()
         )
-        embed.add_field(name="Channel", value=channel.name, inline=False)
-        embed.add_field(name="Deleted By", value=interaction.user.mention, inline=False)
-        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Channel", value=channel.name)
+        embed.add_field(name="By", value=interaction.user.mention)
+        embed.add_field(name="Reason", value=reason)
 
         await self.send_changelog(interaction.guild, embed)
-
-        await channel.delete(reason=f"{interaction.user} - {reason}")
-
-        await interaction.followup.send("✅ Channel deleted and logged in changelog.", ephemeral=True)
+        await channel.delete(reason=reason)
 
     # ========================
     # CLEAR CHAT
@@ -140,8 +339,7 @@ class Admin(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         deleted = await interaction.channel.purge(limit=amount)
         await interaction.followup.send(
-            f"🧹 Deleted {len(deleted)} messages",
-            ephemeral=True
+            f"🧹 Deleted {len(deleted)} messages", ephemeral=True
         )
 
 
