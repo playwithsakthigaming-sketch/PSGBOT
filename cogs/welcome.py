@@ -80,7 +80,7 @@ class Welcome(commands.Cog):
             embed.set_image(url=LOGO_URL)
 
             await interaction.followup.send(
-                content=interaction.user.mention,  # 👈 mention above embed
+                content=interaction.user.mention,
                 embed=embed
             )
 
@@ -112,17 +112,6 @@ class Welcome(commands.Cog):
                 except:
                     pass
 
-            # DM welcome
-            try:
-                await member.send(
-                    message.format(
-                        user=member.name,
-                        server=member.guild.name
-                    )
-                )
-            except:
-                pass
-
             if not channel:
                 return
 
@@ -140,7 +129,7 @@ class Welcome(commands.Cog):
             embed.set_footer(text=f"Member #{member.guild.member_count}")
 
             await channel.send(
-                content=member.mention,  # 👈 mention above embed
+                content=member.mention,
                 embed=embed
             )
 
