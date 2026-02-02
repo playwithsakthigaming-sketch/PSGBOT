@@ -4,12 +4,14 @@ from discord import app_commands
 import datetime
 import random
 import asyncio
+import time
 
 # ========================
 # CONFIG
 # ========================
 CHANGELOG_CHANNEL_ID = 123456789012345678  # PUT YOUR CHANGELOG CHANNEL ID HERE
-DM_DELAY = 2  # seconds between each DM to avoid rate limit
+DM_DELAY = 2  # seconds between each DM
+START_TIME = time.time()
 
 
 # ========================
@@ -91,18 +93,88 @@ class Admin(commands.Cog):
             await channel.send(embed=embed)
 
     # ========================
+    # PING
+    # ========================
+    @app_commands.command(name="ping", description="🏓 Check bot latency")
+    async def ping(self, interaction: discord.Interaction):
+        latency = round(self.bot.latency * 1000)
+        await interaction.response.send_message(f"🏓 Pong! `{latency}ms`", ephemeral=True)
+
+    # ========================
+    # SERVER STATUS
+    # ========================
+    @app_commands.command(name="serverstatus", description="📊 Show server status")
+    async def serverstatus(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        online = sum(m.status != discord.Status.offline for m in guild.members)
+
+        embed = discord.Embed(
+            title="📊 Server Status",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="Server", value=guild.name, inline=False)
+        embed.add_field(name="Members", value=guild.member_count, inline=True)
+        embed.add_field(name="Online", value=online, inline=True)
+        embed.add_field(name="Channels", value=len(guild.channels), inline=True)
+        embed.add_field(name="Roles", value=len(guild.roles), inline=True)
+        embed.add_field(name="Boost Level", value=guild.premium_tier, inline=True)
+
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+
+        await interaction.response.send_message(embed=embed)
+
+    # ========================
+    # BOT INFO
+    # ========================
+    @app_commands.command(name="botinfo", description="🤖 Show bot information")
+    async def botinfo(self, interaction: discord.Interaction):
+        uptime = int(time.time() - START_TIME)
+
+        embed = discord.Embed(
+            title="🤖 Bot Information",
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="Servers", value=len(self.bot.guilds), inline=True)
+        embed.add_field(name="Users", value=len(self.bot.users), inline=True)
+        embed.add_field(name="Latency", value=f"{round(self.bot.latency*1000)}ms", inline=True)
+        embed.add_field(name="Uptime", value=f"{uptime//3600}h {(uptime%3600)//60}m", inline=True)
+        embed.add_field(name="Python", value="discord.py", inline=True)
+
+        await interaction.response.send_message(embed=embed)
+
+    # ========================
+    # PLAYER STATUS
+    # ========================
+    @app_commands.command(name="playerstatus", description="👥 Show member status counts")
+    async def playerstatus(self, interaction: discord.Interaction):
+        guild = interaction.guild
+
+        online = len([m for m in guild.members if m.status == discord.Status.online])
+        idle = len([m for m in guild.members if m.status == discord.Status.idle])
+        dnd = len([m for m in guild.members if m.status == discord.Status.dnd])
+        offline = len([m for m in guild.members if m.status == discord.Status.offline])
+
+        embed = discord.Embed(
+            title="👥 Player Status",
+            color=discord.Color.purple(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        embed.add_field(name="🟢 Online", value=online, inline=True)
+        embed.add_field(name="🌙 Idle", value=idle, inline=True)
+        embed.add_field(name="⛔ DND", value=dnd, inline=True)
+        embed.add_field(name="⚫ Offline", value=offline, inline=True)
+
+        await interaction.response.send_message(embed=embed)
+
+    # ========================
     # DM USER (ADVANCED)
     # ========================
     @app_commands.command(name="dm", description="📩 Send embed DM to a user")
     @app_commands.checks.has_permissions(administrator=True)
-    async def dm(
-        self,
-        interaction: discord.Interaction,
-        user: discord.User,
-        title: str,
-        message: str,
-        imageurl: str = None
-    ):
+    async def dm(self, interaction: discord.Interaction, user: discord.User, title: str, message: str, imageurl: str = None):
         embed = discord.Embed(title=title, description=message, color=discord.Color.blue())
         if imageurl:
             embed.set_image(url=imageurl)
@@ -115,26 +187,14 @@ class Admin(commands.Cog):
                 await interaction.followup.send("❌ Could not DM this user.", ephemeral=True)
 
         view = ConfirmView(send_dm)
-        await interaction.response.send_message(
-            f"⚠️ Confirm sending DM to {user.mention}?",
-            embed=embed,
-            view=view,
-            ephemeral=True
-        )
+        await interaction.response.send_message("⚠️ Confirm sending DM?", embed=embed, view=view, ephemeral=True)
 
     # ========================
     # DM ALL ROLE MEMBERS
     # ========================
     @app_commands.command(name="dmall", description="📢 DM all members of a role")
     @app_commands.checks.has_permissions(administrator=True)
-    async def dmall(
-        self,
-        interaction: discord.Interaction,
-        role: discord.Role,
-        title: str,
-        message: str,
-        imageurl: str = None
-    ):
+    async def dmall(self, interaction: discord.Interaction, role: discord.Role, title: str, message: str, imageurl: str = None):
         embed = discord.Embed(title=title, description=message, color=discord.Color.orange())
         if imageurl:
             embed.set_image(url=imageurl)
@@ -151,180 +211,25 @@ class Admin(commands.Cog):
                 except:
                     pass
 
-            await interaction.followup.send(
-                f"✅ DM sent to {count} members of {role.name}",
-                ephemeral=True
-            )
+            await interaction.followup.send(f"✅ DM sent to {count} members of {role.name}", ephemeral=True)
 
         view = ConfirmView(send_bulk_dm)
-        await interaction.response.send_message(
-            f"⚠️ Confirm sending DM to all members of **{role.name}**?",
-            embed=embed,
-            view=view,
-            ephemeral=True
-        )
+        await interaction.response.send_message("⚠️ Confirm sending DM to all role members?", embed=embed, view=view, ephemeral=True)
 
     # ========================
-    # SELF ROLE
+    # CLEAR CHAT
     # ========================
-    @app_commands.command(name="selfrole", description="🎭 Create emoji selfrole panel")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def selfrole(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        title: str,
-        imageurl: str,
-        role1: discord.Role,
-        emoji1: str,
-        role2: discord.Role = None,
-        emoji2: str = None,
-        role3: discord.Role = None,
-        emoji3: str = None,
-        role4: discord.Role = None,
-        emoji4: str = None,
-    ):
-        pairs = []
-        if role1: pairs.append((role1, emoji1))
-        if role2: pairs.append((role2, emoji2))
-        if role3: pairs.append((role3, emoji3))
-        if role4: pairs.append((role4, emoji4))
-
-        embed = discord.Embed(
-            title=title,
-            description="Click emoji to get/remove role",
-            color=discord.Color.purple()
-        )
-        embed.set_image(url=imageurl)
-
-        await channel.send(embed=embed, view=SelfRoleView(pairs))
-        await interaction.response.send_message(
-            f"✅ Selfrole panel sent to {channel.mention}", ephemeral=True
-        )
-
-    # ========================
-    # POLL
-    # ========================
-    @app_commands.command(name="poll", description="📊 Create a poll")
-    async def poll(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        title: str,
-        question: str,
-        imageurl: str = None,
-        option1: str = None,
-        option2: str = None,
-        option3: str = None,
-        option4: str = None,
-    ):
-        embed = discord.Embed(title=title, description=question, color=discord.Color.blue())
-        if imageurl:
-            embed.set_image(url=imageurl)
-
-        options = [option1, option2, option3, option4]
-        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
-
-        text = ""
-        for i, opt in enumerate(options):
-            if opt:
-                text += f"{emojis[i]} {opt}\n"
-
-        embed.add_field(name="Options", value=text, inline=False)
-        msg = await channel.send(embed=embed)
-
-        for i, opt in enumerate(options):
-            if opt:
-                await msg.add_reaction(emojis[i])
-
-        await interaction.response.send_message(
-            f"✅ Poll sent to {channel.mention}", ephemeral=True
-        )
-
-    # ========================
-    # GIVEAWAY
-    # ========================
-    @app_commands.command(name="giveaway", description="🎁 Start giveaway")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def giveaway(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        title: str,
-        prize: str,
-        minutes: int,
-        winners: int = 1,
-        imageurl: str = None
-    ):
-        view = GiveawayView()
-
-        embed = discord.Embed(title=title, color=discord.Color.gold())
-        embed.add_field(name="Prize", value=prize)
-        embed.add_field(name="Winners", value=str(winners))
-        embed.add_field(name="Ends In", value=f"{minutes} minutes")
-        embed.set_footer(text=f"Hosted by {interaction.user}")
-
-        if imageurl:
-            embed.set_image(url=imageurl)
-
-        msg = await channel.send(embed=embed, view=view)
-
-        self.giveaways[msg.id] = {
-            "view": view,
-            "prize": prize,
-            "winners": winners,
-            "channel": channel.id
-        }
-
-        await interaction.response.send_message(
-            f"✅ Giveaway started in {channel.mention}", ephemeral=True
-        )
-
-        await asyncio.sleep(minutes * 60)
-        await self.finish_giveaway(msg.id)
-
-    async def finish_giveaway(self, message_id: int):
-        data = self.giveaways.get(message_id)
-        if not data:
-            return
-
-        channel = self.bot.get_channel(data["channel"])
-        view = data["view"]
-
-        if not view.participants:
-            return await channel.send("❌ No participants.")
-
-        winners = random.sample(
-            list(view.participants),
-            min(data["winners"], len(view.participants))
-        )
-        mentions = ", ".join(f"<@{w}>" for w in winners)
-
-        embed = discord.Embed(title="🎉 Giveaway Ended!", color=discord.Color.green())
-        embed.add_field(name="Prize", value=data["prize"])
-        embed.add_field(name="Winners", value=mentions)
-
-        await channel.send(embed=embed)
-        del self.giveaways[message_id]
-
-    @app_commands.command(name="end_giveaway")
-    async def end_giveaway(self, interaction: discord.Interaction, message_id: str):
-        await self.finish_giveaway(int(message_id))
-        await interaction.response.send_message("✅ Giveaway ended.", ephemeral=True)
-
-    @app_commands.command(name="reroll_giveaway")
-    async def reroll_giveaway(self, interaction: discord.Interaction, message_id: str):
-        data = self.giveaways.get(int(message_id))
-        if not data:
-            return await interaction.response.send_message("❌ Giveaway not found.", ephemeral=True)
-
-        winner = random.choice(list(data["view"].participants))
-        await interaction.response.send_message(f"🎉 New winner: <@{winner}>")
+    @app_commands.command(name="clear_chat", description="🧹 Clear messages")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def clear_chat(self, interaction: discord.Interaction, amount: int):
+        await interaction.response.defer(ephemeral=True)
+        deleted = await interaction.channel.purge(limit=amount)
+        await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages", ephemeral=True)
 
     # ========================
     # DELETE CHANNEL + CHANGELOG
     # ========================
-    @app_commands.command(name="delete_channel")
+    @app_commands.command(name="delete_channel", description="🗑 Delete channel and log it")
     @app_commands.checks.has_permissions(manage_channels=True)
     async def delete_channel(self, interaction: discord.Interaction, reason: str = "No reason"):
         embed = discord.Embed(title="📜 Channel Deleted", color=discord.Color.red())
@@ -334,18 +239,6 @@ class Admin(commands.Cog):
 
         await self.send_changelog(embed)
         await interaction.channel.delete(reason=reason)
-
-    # ========================
-    # CLEAR CHAT
-    # ========================
-    @app_commands.command(name="clear_chat")
-    @app_commands.checks.has_permissions(manage_messages=True)
-    async def clear_chat(self, interaction: discord.Interaction, amount: int):
-        await interaction.response.defer(ephemeral=True)
-        deleted = await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(
-            f"🧹 Deleted {len(deleted)} messages", ephemeral=True
-        )
 
 
 # ========================
