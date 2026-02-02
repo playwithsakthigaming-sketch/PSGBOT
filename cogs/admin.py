@@ -51,8 +51,12 @@ class ServerStatusView(discord.ui.View):
 # SELF ROLE SYSTEM
 # ========================
 class SelfRoleButton(discord.ui.Button):
-    def __init__(self, role: discord.Role):
-        super().__init__(label=role.name, style=discord.ButtonStyle.primary)
+    def __init__(self, role: discord.Role, emoji: str = None):
+        super().__init__(
+            label=role.name,
+            style=discord.ButtonStyle.primary,
+            emoji=emoji
+        )
         self.role = role
 
     async def callback(self, interaction: discord.Interaction):
@@ -70,10 +74,10 @@ class SelfRoleButton(discord.ui.Button):
 
 
 class SelfRoleView(discord.ui.View):
-    def __init__(self, roles):
+    def __init__(self, role_emoji_pairs):
         super().__init__(timeout=None)
-        for role in roles:
-            self.add_item(SelfRoleButton(role))
+        for role, emoji in role_emoji_pairs:
+            self.add_item(SelfRoleButton(role, emoji))
 
 
 # ========================
@@ -108,12 +112,18 @@ class Admin(commands.Cog):
             discord.Game(name="Play With Sakthi Gaming"),
         ]
 
+    # ========================
+    # READY
+    # ========================
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.status_loop.is_running():
             self.status_loop.start()
             print("✅ Admin Cog Loaded")
 
+    # ========================
+    # STATUS LOOP
+    # ========================
     @tasks.loop(seconds=15)
     async def status_loop(self):
         await self.bot.change_presence(activity=self.status_list[self.status_index])
@@ -145,30 +155,86 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view)
 
     # ========================
-    # SELF ROLE (WITH CHANNEL + IMAGE)
+    # POLL (CHANNEL + TITLE + IMAGE)
     # ========================
-    @app_commands.command(name="selfrole", description="🎭 Create self role buttons")
+    @app_commands.command(name="poll", description="📊 Create a poll")
+    async def poll(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        title: str,
+        question: str,
+        imageurl: str = None,
+        option1: str = None,
+        option2: str = None,
+        option3: str = None,
+        option4: str = None,
+    ):
+        embed = discord.Embed(
+            title=title,
+            description=question,
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.utcnow()
+        )
+
+        if imageurl:
+            embed.set_image(url=imageurl)
+
+        options = [option1, option2, option3, option4]
+        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+
+        text = ""
+        for i, opt in enumerate(options):
+            if opt:
+                text += f"{emojis[i]} {opt}\n"
+
+        embed.add_field(name="Options", value=text, inline=False)
+        embed.set_footer(text=f"Poll by {interaction.user}")
+
+        msg = await channel.send(embed=embed)
+
+        for i, opt in enumerate(options):
+            if opt:
+                await msg.add_reaction(emojis[i])
+
+        await interaction.response.send_message(
+            f"✅ Poll sent to {channel.mention}", ephemeral=True
+        )
+
+    # ========================
+    # SELF ROLE (CHANNEL + TITLE + IMAGE + EMOJI)
+    # ========================
+    @app_commands.command(name="selfrole", description="🎭 Create self role buttons with emojis")
     @app_commands.checks.has_permissions(administrator=True)
     async def selfrole(
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
+        title: str,
         imageurl: str,
         role1: discord.Role,
+        emoji1: str,
         role2: discord.Role = None,
+        emoji2: str = None,
         role3: discord.Role = None,
+        emoji3: str = None,
         role4: discord.Role = None,
+        emoji4: str = None,
     ):
-        roles = [r for r in [role1, role2, role3, role4] if r]
+        role_emoji_pairs = []
+        if role1: role_emoji_pairs.append((role1, emoji1))
+        if role2: role_emoji_pairs.append((role2, emoji2))
+        if role3: role_emoji_pairs.append((role3, emoji3))
+        if role4: role_emoji_pairs.append((role4, emoji4))
 
         embed = discord.Embed(
-            title="🎭 Choose Your Role",
+            title=title,
             description="Click buttons to get/remove roles",
             color=discord.Color.purple()
         )
         embed.set_image(url=imageurl)
 
-        view = SelfRoleView(roles)
+        view = SelfRoleView(role_emoji_pairs)
         await channel.send(embed=embed, view=view)
 
         await interaction.response.send_message(
@@ -176,7 +242,7 @@ class Admin(commands.Cog):
         )
 
     # ========================
-    # START GIVEAWAY (WITH CHANNEL + IMAGE)
+    # GIVEAWAY (CHANNEL + TITLE + IMAGE)
     # ========================
     @app_commands.command(name="giveaway", description="🎁 Start an advanced giveaway")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -184,6 +250,7 @@ class Admin(commands.Cog):
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
+        title: str,
         prize: str,
         minutes: int,
         winners: int = 1,
@@ -192,7 +259,7 @@ class Admin(commands.Cog):
         view = GiveawayView()
 
         embed = discord.Embed(
-            title="🎁 Giveaway Started!",
+            title=title,
             color=discord.Color.gold(),
             timestamp=datetime.datetime.utcnow()
         )
@@ -231,7 +298,7 @@ class Admin(commands.Cog):
         channel = self.bot.get_channel(data["channel"])
         view = data["view"]
 
-        if len(view.participants) == 0:
+        if not view.participants:
             await channel.send("❌ Giveaway ended. No participants.")
             return
 
