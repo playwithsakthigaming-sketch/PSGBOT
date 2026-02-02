@@ -1,85 +1,107 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import datetime
-import aiosqlite
-import os
-import sys
+import random
+import asyncio
 import time
 
-DB_NAME = "bot.db"
+# ========================
+# CONFIG
+# ========================
+CHANGELOG_CHANNEL_ID = 123456789012345678
+DM_DELAY = 2
 START_TIME = time.time()
 
+
+# ========================
+# CONFIRM VIEW
+# ========================
+class ConfirmView(discord.ui.View):
+    def __init__(self, callback):
+        super().__init__(timeout=60)
+        self.callback = callback
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        await self.callback()
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Action cancelled.", ephemeral=True)
+        self.stop()
+
+
+# ========================
+# SELF ROLE SYSTEM (EMOJI ONLY)
+# ========================
+class SelfRoleButton(discord.ui.Button):
+    def __init__(self, role: discord.Role, emoji: str):
+        super().__init__(label="", style=discord.ButtonStyle.primary, emoji=emoji)
+        self.role = role
+
+    async def callback(self, interaction: discord.Interaction):
+        member = interaction.user
+        if self.role in member.roles:
+            await member.remove_roles(self.role)
+            await interaction.response.send_message(f"❌ Removed **{self.role.name}**", ephemeral=True)
+        else:
+            await member.add_roles(self.role)
+            await interaction.response.send_message(f"✅ Added **{self.role.name}**", ephemeral=True)
+
+
+class SelfRoleView(discord.ui.View):
+    def __init__(self, pairs):
+        super().__init__(timeout=None)
+        for role, emoji in pairs:
+            self.add_item(SelfRoleButton(role, emoji))
+
+
+# ========================
+# GIVEAWAY VIEW
+# ========================
+class GiveawayView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.participants = set()
+
+    @discord.ui.button(label="Join Giveaway", style=discord.ButtonStyle.green, emoji="🎉")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in self.participants:
+            return await interaction.response.send_message("❌ Already joined!", ephemeral=True)
+
+        self.participants.add(interaction.user.id)
+        await interaction.response.send_message("✅ Joined giveaway!", ephemeral=True)
+
+
+# ========================
+# ADMIN COG
+# ========================
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.status_index = 0
-        self.status_list = [
-            discord.Game(name="Watching Modration and activity"),
-            discord.Activity(type=discord.ActivityType.watching, name="premium member security"),
-            discord.Game(name="playing play with sakthi gaming")
-        ]
+        self.giveaways = {}
 
     # ========================
-    # BOT READY
+    # CHANGELOG LOGGER
     # ========================
-    @commands.Cog.listener()
-    async def on_ready(self):
-        if not self.status_loop.is_running():
-            self.status_loop.start()
-            print("✅ Status rotation started (10s)")
+    async def send_changelog(self, embed: discord.Embed):
+        channel = self.bot.get_channel(CHANGELOG_CHANNEL_ID)
+        if channel:
+            await channel.send(embed=embed)
 
     # ========================
-    # STATUS LOOP
-    # ========================
-    @tasks.loop(seconds=10)
-    async def status_loop(self):
-        activity = self.status_list[self.status_index]
-        await self.bot.change_presence(activity=activity)
-        self.status_index = (self.status_index + 1) % len(self.status_list)
-
-    @status_loop.before_loop
-    async def before_status_loop(self):
-        await self.bot.wait_until_ready()
-
-    # ========================
-    # /ping
+    # PING
     # ========================
     @app_commands.command(name="ping", description="🏓 Check bot latency")
     async def ping(self, interaction: discord.Interaction):
         latency = round(self.bot.latency * 1000)
-        await interaction.response.send_message(
-            f"🏓 Pong! `{latency}ms`",
-            ephemeral=True
-        )
+        await interaction.response.send_message(f"🏓 Pong `{latency}ms`", ephemeral=True)
 
     # ========================
-    # /botinfo
-    # ========================
-    @app_commands.command(name="botinfo", description="🤖 Show bot information")
-    async def botinfo(self, interaction: discord.Interaction):
-        uptime = int(time.time() - START_TIME)
-
-        embed = discord.Embed(
-            title="🤖 Bot Info",
-            color=discord.Color.gold(),
-            timestamp=datetime.datetime.utcnow()
-        )
-
-        embed.add_field(name="Servers", value=len(self.bot.guilds), inline=True)
-        embed.add_field(name="Users", value=len(self.bot.users), inline=True)
-        embed.add_field(name="Latency", value=f"{round(self.bot.latency*1000)}ms", inline=True)
-        embed.add_field(
-            name="Uptime",
-            value=f"{uptime//3600}h {(uptime%3600)//60}m",
-            inline=True
-        )
-
-        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
-        await interaction.response.send_message(embed=embed)
-
-    # ========================
-    # /serverstatus
+    # SERVER STATUS
     # ========================
     @app_commands.command(name="serverstatus", description="📊 Show server status")
     async def serverstatus(self, interaction: discord.Interaction):
@@ -91,7 +113,6 @@ class Admin(commands.Cog):
             color=discord.Color.green(),
             timestamp=datetime.datetime.utcnow()
         )
-
         embed.add_field(name="Server", value=guild.name, inline=False)
         embed.add_field(name="Members", value=guild.member_count, inline=True)
         embed.add_field(name="Online", value=online, inline=True)
@@ -105,6 +126,21 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ========================
+    # BOT INFO
+    # ========================
+    @app_commands.command(name="botinfo", description="🤖 Show bot information")
+    async def botinfo(self, interaction: discord.Interaction):
+        uptime = int(time.time() - START_TIME)
+
+        embed = discord.Embed(title="🤖 Bot Information", color=discord.Color.blue())
+        embed.add_field(name="Servers", value=len(self.bot.guilds), inline=True)
+        embed.add_field(name="Users", value=len(self.bot.users), inline=True)
+        embed.add_field(name="Latency", value=f"{round(self.bot.latency*1000)}ms", inline=True)
+        embed.add_field(name="Uptime", value=f"{uptime//3600}h {(uptime%3600)//60}m", inline=True)
+
+        await interaction.response.send_message(embed=embed)
+
+       # ========================
     # /playerinfo (UPDATED)
     # ========================
     @app_commands.command(name="playerinfo", description="👤 Show user information")
@@ -138,7 +174,7 @@ class Admin(commands.Cog):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.add_field(name="Username", value=member.name, inline=True)
         embed.add_field(name="User ID", value=member.id, inline=True)
-        embed.add_field(name="Premium", value=premium_status, inline=True)
+        embed.add_field(name="DB Premium", value=premium_status, inline=True)
         embed.add_field(name="Nitro", value=nitro_status, inline=True)
         embed.add_field(name="Server Booster", value=boost_status, inline=True)
         embed.add_field(name="Joined Server", value=member.joined_at.strftime("%d-%m-%Y"), inline=False)
@@ -148,69 +184,51 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ========================
-    # /setstatus
+    # DM USER (ADVANCED)
     # ========================
-    @app_commands.command(name="setstatus", description="🤖 Set bot activity manually")
+    @app_commands.command(name="dm", description="📩 Send embed DM to a user")
     @app_commands.checks.has_permissions(administrator=True)
-    async def setstatus(self, interaction: discord.Interaction, mode: str, text: str):
-        await interaction.response.defer(ephemeral=True)
+    async def dm(self, interaction: discord.Interaction, user: discord.User, title: str, message: str, imageurl: str = None):
+        embed = discord.Embed(title=title, description=message, color=discord.Color.blue())
+        if imageurl:
+            embed.set_image(url=imageurl)
 
-        mode = mode.lower()
-        if mode == "playing":
-            activity = discord.Game(name=text)
-        elif mode == "watching":
-            activity = discord.Activity(type=discord.ActivityType.watching, name=text)
-        elif mode == "listening":
-            activity = discord.Activity(type=discord.ActivityType.listening, name=text)
-        else:
-            return await interaction.followup.send(
-                "❌ Mode must be: playing / watching / listening",
-                ephemeral=True
-            )
+        async def send_dm():
+            try:
+                await user.send(embed=embed)
+                await interaction.followup.send(f"✅ DM sent to {user.mention}", ephemeral=True)
+            except:
+                await interaction.followup.send("❌ Could not DM this user.", ephemeral=True)
 
-        await self.bot.change_presence(activity=activity)
-        await interaction.followup.send(
-            f"✅ Bot status updated to **{mode} {text}**",
-            ephemeral=True
-        )
+        view = ConfirmView(send_dm)
+        await interaction.response.send_message("⚠️ Confirm sending DM?", embed=embed, view=view, ephemeral=True)
 
     # ========================
-    # /restart
+    # DM ALL ROLE MEMBERS
     # ========================
-    @app_commands.command(name="restart", description="♻ Restart the bot")
+    @app_commands.command(name="dmall", description="📢 DM all members of a role")
     @app_commands.checks.has_permissions(administrator=True)
-    async def restart(self, interaction: discord.Interaction):
-        await interaction.response.send_message("♻ Restarting bot...", ephemeral=True)
-        os.execv(sys.executable, ["python"] + sys.argv)
+    async def dmall(self, interaction: discord.Interaction, role: discord.Role, title: str, message: str, imageurl: str = None):
+        embed = discord.Embed(title=title, description=message, color=discord.Color.orange())
+        if imageurl:
+            embed.set_image(url=imageurl)
 
-    # ========================
-    # /dm
-    # ========================
-    @app_commands.command(name="dm", description="✉ Send DM to a user")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def dm(self, interaction: discord.Interaction, member: discord.Member, message: str):
-        try:
-            await member.send(message)
-            await interaction.response.send_message("✅ DM sent", ephemeral=True)
-        except:
-            await interaction.response.send_message("❌ Could not send DM", ephemeral=True)
-
-    # ========================
-    # /dmall
-    # ========================
-    @app_commands.command(name="dmall", description="📢 DM all server members")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def dmall(self, interaction: discord.Interaction, message: str):
-        await interaction.response.defer(ephemeral=True)
-        count = 0
-        for member in interaction.guild.members:
-            if not member.bot:
+        async def send_bulk_dm():
+            count = 0
+            for member in role.members:
+                if member.bot:
+                    continue
                 try:
-                    await member.send(message)
+                    await member.send(embed=embed)
                     count += 1
+                    await asyncio.sleep(DM_DELAY)
                 except:
                     pass
-        await interaction.followup.send(f"✅ Sent DM to {count} members", ephemeral=True)
+
+            await interaction.followup.send(f"✅ DM sent to {count} members of {role.name}", ephemeral=True)
+
+        view = ConfirmView(send_bulk_dm)
+        await interaction.response.send_message("⚠️ Confirm sending DM to role members?", embed=embed, view=view, ephemeral=True)
 
     # ========================
     # CLEAR CHAT
@@ -220,10 +238,21 @@ class Admin(commands.Cog):
     async def clear_chat(self, interaction: discord.Interaction, amount: int):
         await interaction.response.defer(ephemeral=True)
         deleted = await interaction.channel.purge(limit=amount)
-        await interaction.followup.send(
-            f"🧹 Deleted {len(deleted)} messages",
-            ephemeral=True
-        )
+        await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages", ephemeral=True)
+
+    # ========================
+    # DELETE CHANNEL + CHANGELOG
+    # ========================
+    @app_commands.command(name="delete_channel", description="🗑 Delete channel and log it")
+    @app_commands.checks.has_permissions(manage_channels=True)
+    async def delete_channel(self, interaction: discord.Interaction, reason: str = "No reason"):
+        embed = discord.Embed(title="📜 Channel Deleted", color=discord.Color.red())
+        embed.add_field(name="Channel", value=interaction.channel.name)
+        embed.add_field(name="By", value=interaction.user.mention)
+        embed.add_field(name="Reason", value=reason)
+
+        await self.send_changelog(embed)
+        await interaction.channel.delete(reason=reason)
 
 
 # ========================
