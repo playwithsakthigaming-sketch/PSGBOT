@@ -138,7 +138,7 @@ class Admin(commands.Cog):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.add_field(name="Username", value=member.name, inline=True)
         embed.add_field(name="User ID", value=member.id, inline=True)
-        embed.add_field(name="DB Premium", value=premium_status, inline=True)
+        embed.add_field(name="Premium", value=premium_status, inline=True)
         embed.add_field(name="Nitro", value=nitro_status, inline=True)
         embed.add_field(name="Server Booster", value=boost_status, inline=True)
         embed.add_field(name="Joined Server", value=member.joined_at.strftime("%d-%m-%Y"), inline=False)
