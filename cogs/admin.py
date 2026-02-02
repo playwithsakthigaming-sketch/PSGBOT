@@ -1,11 +1,13 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import datetime
 import asyncio
 import random
 import time
 import aiosqlite
+import os
+import sys
 
 # ========================
 # CONFIG
@@ -84,7 +86,6 @@ class GiveawayView(discord.ui.View):
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.giveaways = {}
         self.bot.loop.create_task(self.setup_db())
 
     # ========================
@@ -104,7 +105,10 @@ class Admin(commands.Cog):
     # ERROR HANDLER
     # ========================
     async def cog_app_command_error(self, interaction: discord.Interaction, error):
-        await interaction.response.send_message(f"❌ Error: {error}", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Error: {error}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Error: {error}", ephemeral=True)
 
     # ========================
     # CHANGELOG LOGGER
@@ -218,7 +222,7 @@ class Admin(commands.Cog):
         if imageurl:
             embed.set_image(url=imageurl)
 
-        msg = await interaction.channel.send(embed=embed, view=view)
+        await interaction.channel.send(embed=embed, view=view)
         await interaction.response.send_message("✅ Giveaway started!", ephemeral=True)
 
         await asyncio.sleep(minutes * 60)
@@ -229,7 +233,6 @@ class Admin(commands.Cog):
 
         winner_id = random.choice(list(view.participants))
         winner = interaction.guild.get_member(winner_id)
-
         await interaction.channel.send(f"🎉 Congratulations {winner.mention}! You won **{title}**")
 
     # ========================
@@ -293,6 +296,26 @@ class Admin(commands.Cog):
 
         await self.send_changelog(embed)
         await interaction.channel.delete(reason=reason)
+
+    # ========================
+    # RESTART BOT
+    # ========================
+    @app_commands.command(name="restart")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def restart(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="♻ Restart Bot",
+            description="Are you sure you want to restart the bot?",
+            color=discord.Color.orange()
+        )
+
+        async def do_restart():
+            await interaction.followup.send("♻ Bot is restarting...", ephemeral=True)
+            await self.bot.close()
+            os.execv(sys.executable, ['python'] + sys.argv)
+
+        view = ConfirmView(do_restart)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ========================
