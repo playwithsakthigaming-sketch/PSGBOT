@@ -6,4 +6,5 @@ requests
 yt-dlp
 PyNaCl
 discord.py
-pip install gTTS langdetect
+gTTS 
+langdetect
