@@ -37,6 +37,7 @@ COGS = [
     "cogs.coupons",
     "cogs.backup",
     "cogs.admin", 
+    "cogs.auto_tts", 
     "cogs.shop", 
     "cogs.youtube"
 ]
