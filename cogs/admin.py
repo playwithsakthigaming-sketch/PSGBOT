@@ -43,7 +43,7 @@ class ConfirmView(discord.ui.View):
 # ========================
 class SelfRoleButton(discord.ui.Button):
     def __init__(self, role: discord.Role, emoji: str):
-        super().__init__(style=discord.ButtonStyle.primary, emoji=emoji)
+        super().__init__(style=discord.ButtonStyle.primary, emoji=emoji, label=role.name)
         self.role = role
 
     async def callback(self, interaction: discord.Interaction):
@@ -57,9 +57,9 @@ class SelfRoleButton(discord.ui.Button):
 
 
 class SelfRoleView(discord.ui.View):
-    def __init__(self, pairs):
+    def __init__(self, role_pairs: list):
         super().__init__(timeout=None)
-        for role, emoji in pairs:
+        for role, emoji in role_pairs:
             self.add_item(SelfRoleButton(role, emoji))
 
 
@@ -75,7 +75,6 @@ class GiveawayView(discord.ui.View):
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id in self.participants:
             return await interaction.response.send_message("❌ Already joined!", ephemeral=True)
-
         self.participants.add(interaction.user.id)
         await interaction.response.send_message("✅ Joined giveaway!", ephemeral=True)
 
@@ -192,48 +191,70 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ========================
-    # SELF ROLE SETUP
+    # SELF ROLE (UPDATED)
     # ========================
-    @app_commands.command(name="selfrole")
+    @app_commands.command(name="selfrole", description="Create self role panel with title and description")
     @app_commands.checks.has_permissions(administrator=True)
-    async def selfrole(self, interaction: discord.Interaction, role1: discord.Role, emoji1: str,
-                       role2: discord.Role = None, emoji2: str = None):
-        pairs = [(role1, emoji1)]
-        if role2 and emoji2:
-            pairs.append((role2, emoji2))
+    async def selfrole(self, interaction: discord.Interaction, channel: discord.TextChannel, title: str, description: str, roles: str):
+        """
+        roles format:
+        @Role1:🔥,@Role2:🎮,@Role3:🎧
+        """
+        await interaction.response.defer(ephemeral=True)
 
-        embed = discord.Embed(title="🎭 Self Roles", description="Click buttons to get/remove roles")
+        pairs = []
+
+        try:
+            for item in roles.split(","):
+                role_part, emoji = item.split(":")
+                role_id = int(role_part.replace("<@&", "").replace(">", ""))
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    pairs.append((role, emoji))
+        except:
+            return await interaction.followup.send(
+                "❌ Format error!\nUse: `@Role:emoji,@Role2:emoji`",
+                ephemeral=True
+            )
+
+        if not pairs:
+            return await interaction.followup.send("❌ No valid roles found.", ephemeral=True)
+
+        embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
         view = SelfRoleView(pairs)
-        await interaction.response.send_message(embed=embed, view=view)
+
+        await channel.send(embed=embed, view=view)
+        await interaction.followup.send("✅ Self role panel created!", ephemeral=True)
 
     # ========================
-    # GIVEAWAY START
+    # GIVEAWAY (UPDATED)
     # ========================
-    @app_commands.command(name="giveaway")
+    @app_commands.command(name="giveaway", description="Start a giveaway with channel, title and description")
     @app_commands.checks.has_permissions(administrator=True)
-    async def giveaway(self, interaction: discord.Interaction, minutes: int, title: str, imageurl: str = None):
+    async def giveaway(self, interaction: discord.Interaction, channel: discord.TextChannel, minutes: int, title: str, description: str, imageurl: str = None):
         view = GiveawayView()
 
         embed = discord.Embed(
-            title=f"🎉 Giveaway: {title}",
-            description=f"Ends in {minutes} minutes\nClick button to join!",
+            title=f"🎉 {title}",
+            description=f"{description}\n\n⏳ Ends in {minutes} minutes\nClick 🎉 to join!",
             color=discord.Color.gold()
         )
+
         if imageurl:
             embed.set_image(url=imageurl)
 
-        await interaction.channel.send(embed=embed, view=view)
+        await channel.send(embed=embed, view=view)
         await interaction.response.send_message("✅ Giveaway started!", ephemeral=True)
 
         await asyncio.sleep(minutes * 60)
 
         if not view.participants:
-            await interaction.channel.send("❌ No participants joined the giveaway.")
+            await channel.send("❌ No participants joined the giveaway.")
             return
 
         winner_id = random.choice(list(view.participants))
         winner = interaction.guild.get_member(winner_id)
-        await interaction.channel.send(f"🎉 Congratulations {winner.mention}! You won **{title}**")
+        await channel.send(f"🎉 Congratulations {winner.mention}! You won **{title}**")
 
     # ========================
     # DM USER
