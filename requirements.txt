@@ -8,3 +8,4 @@ PyNaCl
 discord.py
 gTTS 
 langdetect
+ffmpeg -version
