@@ -39,21 +39,26 @@ class ConfirmView(discord.ui.View):
 
 
 # ========================
-# SELF ROLE SYSTEM
+# SELF ROLE SYSTEM (EMOJI ONLY)
 # ========================
 class SelfRoleButton(discord.ui.Button):
     def __init__(self, role: discord.Role, emoji: str):
-        super().__init__(style=discord.ButtonStyle.primary, emoji=emoji, label=role.name)
+        super().__init__(style=discord.ButtonStyle.primary, emoji=emoji, label="")
         self.role = role
 
     async def callback(self, interaction: discord.Interaction):
         member = interaction.user
+
         if self.role in member.roles:
             await member.remove_roles(self.role)
-            await interaction.response.send_message(f"❌ Removed **{self.role.name}**", ephemeral=True)
+            await interaction.response.send_message(
+                f"❌ Removed **{self.role.name}**", ephemeral=True
+            )
         else:
             await member.add_roles(self.role)
-            await interaction.response.send_message(f"✅ Added **{self.role.name}**", ephemeral=True)
+            await interaction.response.send_message(
+                f"✅ Added **{self.role.name}**", ephemeral=True
+            )
 
 
 class SelfRoleView(discord.ui.View):
@@ -191,11 +196,19 @@ class Admin(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ========================
-    # SELF ROLE (UPDATED)
+    # SELF ROLE (EMOJI ONLY + IMAGEURL)
     # ========================
-    @app_commands.command(name="selfrole", description="Create self role panel with title and description")
+    @app_commands.command(name="selfrole", description="Create emoji-only self role panel with image")
     @app_commands.checks.has_permissions(administrator=True)
-    async def selfrole(self, interaction: discord.Interaction, channel: discord.TextChannel, title: str, description: str, roles: str):
+    async def selfrole(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        title: str,
+        description: str,
+        imageurl: str,
+        roles: str
+    ):
         """
         roles format:
         @Role1:🔥,@Role2:🎮,@Role3:🎧
@@ -221,10 +234,13 @@ class Admin(commands.Cog):
             return await interaction.followup.send("❌ No valid roles found.", ephemeral=True)
 
         embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
-        view = SelfRoleView(pairs)
 
+        if imageurl:
+            embed.set_image(url=imageurl)
+
+        view = SelfRoleView(pairs)
         await channel.send(embed=embed, view=view)
-        await interaction.followup.send("✅ Self role panel created!", ephemeral=True)
+        await interaction.followup.send("✅ Emoji self role panel created!", ephemeral=True)
 
     # ========================
     # GIVEAWAY (UPDATED)
