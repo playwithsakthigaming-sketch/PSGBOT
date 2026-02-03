@@ -80,6 +80,7 @@ class GiveawayView(discord.ui.View):
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id in self.participants:
             return await interaction.response.send_message("❌ Already joined!", ephemeral=True)
+
         self.participants.add(interaction.user.id)
         await interaction.response.send_message("✅ Joined giveaway!", ephemeral=True)
 
@@ -243,11 +244,19 @@ class Admin(commands.Cog):
         await interaction.followup.send("✅ Emoji self role panel created!", ephemeral=True)
 
     # ========================
-    # GIVEAWAY (UPDATED)
+    # GIVEAWAY (DM WINNER)
     # ========================
     @app_commands.command(name="giveaway", description="Start a giveaway with channel, title and description")
     @app_commands.checks.has_permissions(administrator=True)
-    async def giveaway(self, interaction: discord.Interaction, channel: discord.TextChannel, minutes: int, title: str, description: str, imageurl: str = None):
+    async def giveaway(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        minutes: int,
+        title: str,
+        description: str,
+        imageurl: str = None
+    ):
         view = GiveawayView()
 
         embed = discord.Embed(
@@ -270,7 +279,23 @@ class Admin(commands.Cog):
 
         winner_id = random.choice(list(view.participants))
         winner = interaction.guild.get_member(winner_id)
+
+        # announce in channel
         await channel.send(f"🎉 Congratulations {winner.mention}! You won **{title}**")
+
+        # DM winner
+        try:
+            dm_embed = discord.Embed(
+                title="🎉 You Won a Giveaway!",
+                description=f"Congratulations! You won **{title}** 🎁\n\n{description}",
+                color=discord.Color.green()
+            )
+            if imageurl:
+                dm_embed.set_image(url=imageurl)
+
+            await winner.send(embed=dm_embed)
+        except discord.Forbidden:
+            await channel.send(f"⚠️ Could not DM {winner.mention} (DMs closed).")
 
     # ========================
     # DM USER
