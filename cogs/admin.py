@@ -8,6 +8,7 @@ import time
 import aiosqlite
 import os
 import sys
+import aiohttp
 
 # ========================
 # CONFIG
@@ -128,7 +129,9 @@ class Admin(commands.Cog):
     # ========================
     @app_commands.command(name="ping")
     async def ping(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"🏓 Pong `{round(self.bot.latency*1000)}ms`", ephemeral=True)
+        await interaction.response.send_message(
+            f"🏓 Pong `{round(self.bot.latency*1000)}ms`", ephemeral=True
+        )
 
     # ========================
     # SERVER INFO
@@ -235,7 +238,6 @@ class Admin(commands.Cog):
             return await interaction.followup.send("❌ No valid roles found.", ephemeral=True)
 
         embed = discord.Embed(title=title, description=description, color=discord.Color.blurple())
-
         if imageurl:
             embed.set_image(url=imageurl)
 
@@ -280,10 +282,8 @@ class Admin(commands.Cog):
         winner_id = random.choice(list(view.participants))
         winner = interaction.guild.get_member(winner_id)
 
-        # announce in channel
         await channel.send(f"🎉 Congratulations {winner.mention}! You won **{title}**")
 
-        # DM winner
         try:
             dm_embed = discord.Embed(
                 title="🎉 You Won a Giveaway!",
@@ -292,10 +292,47 @@ class Admin(commands.Cog):
             )
             if imageurl:
                 dm_embed.set_image(url=imageurl)
-
             await winner.send(embed=dm_embed)
         except discord.Forbidden:
             await channel.send(f"⚠️ Could not DM {winner.mention} (DMs closed).")
+
+    # ========================
+    # ADD EMOJI (URL or FILE)
+    # ========================
+    @app_commands.command(name="addemoji", description="Add emoji from URL or file")
+    @app_commands.checks.has_permissions(manage_emojis=True)
+    async def addemoji(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        emojiurl: str = None,
+        file: discord.Attachment = None
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        if not emojiurl and not file:
+            return await interaction.followup.send(
+                "❌ Provide either emoji URL or upload a file.",
+                ephemeral=True
+            )
+
+        try:
+            if emojiurl:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(emojiurl) as resp:
+                        if resp.status != 200:
+                            return await interaction.followup.send("❌ Failed to download image.", ephemeral=True)
+                        image_bytes = await resp.read()
+            else:
+                image_bytes = await file.read()
+
+            emoji = await interaction.guild.create_custom_emoji(name=name, image=image_bytes)
+            await interaction.followup.send(f"✅ Emoji added: {emoji}", ephemeral=True)
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ I don't have permission to add emojis.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to add emoji: {e}", ephemeral=True)
 
     # ========================
     # DM USER
@@ -346,18 +383,17 @@ class Admin(commands.Cog):
         await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages", ephemeral=True)
 
     # ========================
-    # DELETE CHANNEL
+    # DELETE CHANNEL (SELECT CHANNEL)
     # ========================
-    @app_commands.command(name="delete_channel")
+    @app_commands.command(name="delete_channel", description="Delete a selected channel")
     @app_commands.checks.has_permissions(manage_channels=True)
-    async def delete_channel(self, interaction: discord.Interaction, reason: str = "No reason"):
+    async def delete_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         embed = discord.Embed(title="📜 Channel Deleted", color=discord.Color.red())
-        embed.add_field(name="Channel", value=interaction.channel.name)
+        embed.add_field(name="Channel", value=channel.name)
         embed.add_field(name="By", value=interaction.user.mention)
-        embed.add_field(name="Reason", value=reason)
 
         await self.send_changelog(embed)
-        await interaction.channel.delete(reason=reason)
+        await channel.delete()
 
     # ========================
     # RESTART BOT
