@@ -86,17 +86,16 @@ def generate_invoice(username, rupees, coins):
     buf.seek(0)
     return buf
 
-# ================= PAYMENT PANEL VIEW =================
-class PaymentPanelView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+# ================= BUY COINS MODAL =================
+class BuyCoinsModal(discord.ui.Modal, title="Buy PSG Coins"):
+    name = discord.ui.TextInput(label="Your Name", placeholder="Enter your name", required=True)
+    coupon = discord.ui.TextInput(label="Coupon Code (optional)", placeholder="Enter coupon code", required=False)
 
-    @discord.ui.button(
-        label="💰 Buy Coins",
-        style=discord.ButtonStyle.success,
-        custom_id="payment_buy"
-    )
-    async def buy(self, interaction: discord.Interaction, button: discord.ui.Button):
+    def __init__(self, user):
+        super().__init__()
+        self.user = user
+
+    async def on_submit(self, interaction: discord.Interaction):
 
         guild = interaction.guild
 
@@ -106,12 +105,12 @@ class PaymentPanelView(discord.ui.View):
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+            self.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
             guild.me: discord.PermissionOverwrite(view_channel=True),
         }
 
         channel = await guild.create_text_channel(
-            name=f"payment-{interaction.user.name}".lower(),
+            name=f"payment-{self.user.name}".lower(),
             category=category,
             overwrites=overwrites
         )
@@ -119,7 +118,8 @@ class PaymentPanelView(discord.ui.View):
         embed = discord.Embed(
             title="💳 Payment Ticket",
             description=(
-                f"{interaction.user.mention}\n\n"
+                f"👤 **Name:** {self.name.value}\n"
+                f"🎟 **Coupon Code:** {self.coupon.value if self.coupon.value else 'None'}\n\n"
                 f"**UPI ID:** `{UPI_ID}`\n"
                 f"**Rate:** ₹{RUPEE_RATE} = {COINS_PER_RATE} PSG Coins\n\n"
                 "📸 Upload your payment screenshot here.\n"
@@ -134,6 +134,19 @@ class PaymentPanelView(discord.ui.View):
             f"✅ Payment ticket created: {channel.mention}",
             ephemeral=True
         )
+
+# ================= PAYMENT PANEL VIEW =================
+class PaymentPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="💰 Buy Coins",
+        style=discord.ButtonStyle.success,
+        custom_id="payment_buy"
+    )
+    async def buy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BuyCoinsModal(interaction.user))
 
 # ================= CLOSE VIEW =================
 class PaymentCloseView(discord.ui.View):
@@ -196,12 +209,8 @@ class Payment(commands.Cog):
 
         invoice = generate_invoice(member.name, rupees, coins)
 
+        # Send invoice ONLY in ticket channel (no DM)
         await interaction.channel.send(file=discord.File(invoice, "invoice.png"))
-
-        try:
-            await member.send(file=discord.File(invoice, "invoice.png"))
-        except:
-            pass
 
         await interaction.followup.send(
             f"✅ Added **{coins} coins** to {member.mention}"
