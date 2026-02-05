@@ -22,13 +22,6 @@ PAYMENT_CATEGORY = "Payments"
 INVOICE_BG_PATH = "assets/invoice_bg.png"
 FONT_PATH = "fonts/CinzelDecorative-Bold.ttf"
 
-# ================= COUPONS =================
-COUPONS = {
-    "PSG10": {"bonus_coins": 10},
-    "FREE5": {"bonus_coins": 5},
-    "VIP50": {"bonus_coins": 50}
-}
-
 # ================= FONT =================
 def get_font(size: int):
     if not os.path.exists(FONT_PATH):
@@ -37,11 +30,11 @@ def get_font(size: int):
 
 # ================= INVOICE CONFIG =================
 INVOICE_TEXT_CONFIG = {
-    "invoice_id": {"x":152,"y":525,"fontSize":25},
-    "date": {"x":675,"y":525,"fontSize":25},
-    "customer": {"x":152,"y":600,"fontSize":23},
-    "paid_amount": {"x":152,"y":730,"fontSize":22},
-    "coin_credit": {"x":152,"y":670,"fontSize":22}
+    "invoice_id": {"x": 152, "y": 525, "fontSize": 25},
+    "date": {"x": 675, "y": 525, "fontSize": 25},
+    "customer": {"x": 152, "y": 600, "fontSize": 23},
+    "paid_amount": {"x": 152, "y": 730, "fontSize": 22},
+    "coin_credit": {"x": 152, "y": 670, "fontSize": 22}
 }
 
 # ================= BACKGROUND =================
@@ -51,14 +44,14 @@ def load_invoice_background():
         bg = Image.open(INVOICE_BG_PATH).convert("RGB")
         return bg.resize((W, H))
     except:
-        return Image.new("RGB", (W, H), (30,30,30))
+        return Image.new("RGB", (W, H), (30, 30, 30))
 
 # ================= INVOICE GENERATOR =================
 def generate_invoice(username, rupees, coins):
     img = load_invoice_background()
     draw = ImageDraw.Draw(img)
 
-    invoice_id = f"PSG-{random.randint(10000,99999)}"
+    invoice_id = f"PSG-{random.randint(10000, 99999)}"
     date = time.strftime("%d/%m/%Y")
 
     cfg = INVOICE_TEXT_CONFIG
@@ -96,26 +89,12 @@ def generate_invoice(username, rupees, coins):
 # ================= BUY COINS MODAL =================
 class BuyCoinsModal(discord.ui.Modal, title="Buy PSG Coins"):
     name = discord.ui.TextInput(label="Your Name", placeholder="Enter your name", required=True)
-    coupon = discord.ui.TextInput(label="Coupon Code (optional)", placeholder="Enter coupon code", required=False)
 
     def __init__(self, user):
         super().__init__()
         self.user = user
 
     async def on_submit(self, interaction: discord.Interaction):
-
-        coupon_code = self.coupon.value.strip().upper() if self.coupon.value else None
-
-        # ===== COUPON VERIFY =====
-        bonus_coins = 0
-        if coupon_code:
-            if coupon_code not in COUPONS:
-                return await interaction.response.send_message(
-                    "❌ Invalid coupon code. Ticket not created.",
-                    ephemeral=True
-                )
-            else:
-                bonus_coins = COUPONS[coupon_code]["bonus_coins"]
 
         guild = interaction.guild
 
@@ -138,9 +117,7 @@ class BuyCoinsModal(discord.ui.Modal, title="Buy PSG Coins"):
         embed = discord.Embed(
             title="💳 Payment Ticket",
             description=(
-                f"👤 **Name:** {self.name.value}\n"
-                f"🎟 **Coupon Code:** {coupon_code if coupon_code else 'None'}\n"
-                f"🎁 **Bonus Coins:** {bonus_coins}\n\n"
+                f"👤 **Name:** {self.name.value}\n\n"
                 f"**UPI ID:** `{UPI_ID}`\n"
                 f"**Rate:** ₹{RUPEE_RATE} = {COINS_PER_RATE} PSG Coins\n\n"
                 "📸 Upload your payment screenshot here.\n"
@@ -205,37 +182,25 @@ class Payment(commands.Cog):
         if rupees <= 0:
             return await interaction.followup.send("❌ Invalid amount.")
 
-        base_coins = (rupees // RUPEE_RATE) * COINS_PER_RATE
-        bonus = 0
-
-        async for msg in interaction.channel.history(limit=10):
-            if msg.embeds:
-                emb = msg.embeds[0]
-                if "Bonus Coins" in emb.description:
-                    for line in emb.description.split("\n"):
-                        if "Bonus Coins" in line:
-                            bonus = int(line.split(":")[1].strip())
-                    break
-
-        total_coins = base_coins + bonus
+        coins = (rupees // RUPEE_RATE) * COINS_PER_RATE
 
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
-                "INSERT OR IGNORE INTO coins (user_id,balance) VALUES (?,0)",
+                "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?, 0)",
                 (member.id,)
             )
             await db.execute(
-                "UPDATE coins SET balance = balance + ? WHERE user_id=?",
-                (total_coins, member.id)
+                "UPDATE coins SET balance = balance + ? WHERE user_id = ?",
+                (coins, member.id)
             )
             await db.commit()
 
-        invoice = generate_invoice(member.name, rupees, total_coins)
+        invoice = generate_invoice(member.name, rupees, coins)
 
         await interaction.channel.send(file=discord.File(invoice, "invoice.png"))
 
         await interaction.followup.send(
-            f"✅ Added **{total_coins} coins** to {member.mention}"
+            f"✅ Added **{coins} coins** to {member.mention}"
         )
 
 # ================= SETUP =================
