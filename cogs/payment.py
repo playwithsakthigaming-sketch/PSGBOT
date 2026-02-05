@@ -22,6 +22,13 @@ PAYMENT_CATEGORY = "Payments"
 INVOICE_BG_PATH = "assets/invoice_bg.png"
 FONT_PATH = "fonts/CinzelDecorative-Bold.ttf"
 
+# ================= COUPONS =================
+COUPONS = {
+    "PSG10": {"bonus_coins": 10},
+    "FREE5": {"bonus_coins": 5},
+    "VIP50": {"bonus_coins": 50}
+}
+
 # ================= FONT =================
 def get_font(size: int):
     if not os.path.exists(FONT_PATH):
@@ -97,6 +104,19 @@ class BuyCoinsModal(discord.ui.Modal, title="Buy PSG Coins"):
 
     async def on_submit(self, interaction: discord.Interaction):
 
+        coupon_code = self.coupon.value.strip().upper() if self.coupon.value else None
+
+        # ===== COUPON VERIFY =====
+        bonus_coins = 0
+        if coupon_code:
+            if coupon_code not in COUPONS:
+                return await interaction.response.send_message(
+                    "❌ Invalid coupon code. Ticket not created.",
+                    ephemeral=True
+                )
+            else:
+                bonus_coins = COUPONS[coupon_code]["bonus_coins"]
+
         guild = interaction.guild
 
         category = discord.utils.get(guild.categories, name=PAYMENT_CATEGORY)
@@ -119,7 +139,8 @@ class BuyCoinsModal(discord.ui.Modal, title="Buy PSG Coins"):
             title="💳 Payment Ticket",
             description=(
                 f"👤 **Name:** {self.name.value}\n"
-                f"🎟 **Coupon Code:** {self.coupon.value if self.coupon.value else 'None'}\n\n"
+                f"🎟 **Coupon Code:** {coupon_code if coupon_code else 'None'}\n"
+                f"🎁 **Bonus Coins:** {bonus_coins}\n\n"
                 f"**UPI ID:** `{UPI_ID}`\n"
                 f"**Rate:** ₹{RUPEE_RATE} = {COINS_PER_RATE} PSG Coins\n\n"
                 "📸 Upload your payment screenshot here.\n"
@@ -140,11 +161,7 @@ class PaymentPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="💰 Buy Coins",
-        style=discord.ButtonStyle.success,
-        custom_id="payment_buy"
-    )
+    @discord.ui.button(label="💰 Buy Coins", style=discord.ButtonStyle.success, custom_id="payment_buy")
     async def buy(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyCoinsModal(interaction.user))
 
@@ -153,16 +170,10 @@ class PaymentCloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="🔒 Close Ticket",
-        style=discord.ButtonStyle.danger,
-        custom_id="payment_close"
-    )
+    @discord.ui.button(label="🔒 Close Ticket", style=discord.ButtonStyle.danger, custom_id="payment_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message(
-                "❌ Admins only.", ephemeral=True
-            )
+            return await interaction.response.send_message("❌ Admins only.", ephemeral=True)
 
         await interaction.channel.delete()
 
@@ -194,7 +205,19 @@ class Payment(commands.Cog):
         if rupees <= 0:
             return await interaction.followup.send("❌ Invalid amount.")
 
-        coins = (rupees // RUPEE_RATE) * COINS_PER_RATE
+        base_coins = (rupees // RUPEE_RATE) * COINS_PER_RATE
+        bonus = 0
+
+        async for msg in interaction.channel.history(limit=10):
+            if msg.embeds:
+                emb = msg.embeds[0]
+                if "Bonus Coins" in emb.description:
+                    for line in emb.description.split("\n"):
+                        if "Bonus Coins" in line:
+                            bonus = int(line.split(":")[1].strip())
+                    break
+
+        total_coins = base_coins + bonus
 
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
@@ -203,17 +226,16 @@ class Payment(commands.Cog):
             )
             await db.execute(
                 "UPDATE coins SET balance = balance + ? WHERE user_id=?",
-                (coins, member.id)
+                (total_coins, member.id)
             )
             await db.commit()
 
-        invoice = generate_invoice(member.name, rupees, coins)
+        invoice = generate_invoice(member.name, rupees, total_coins)
 
-        # Send invoice ONLY in ticket channel (no DM)
         await interaction.channel.send(file=discord.File(invoice, "invoice.png"))
 
         await interaction.followup.send(
-            f"✅ Added **{coins} coins** to {member.mention}"
+            f"✅ Added **{total_coins} coins** to {member.mention}"
         )
 
 # ================= SETUP =================
