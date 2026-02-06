@@ -38,8 +38,15 @@ class BuyPremiumModal(discord.ui.Modal):
         tier = self.tier
         base_price = PRICES[tier]
         discount = 0
-
         coupon_code = self.coupon.value.strip().upper()
+
+        # Ensure coin row exists
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?, 0)",
+                (user_id,)
+            )
+            await db.commit()
 
         # ===== COUPON CHECK =====
         if coupon_code:
@@ -51,28 +58,37 @@ class BuyPremiumModal(discord.ui.Modal):
                     row = await cur.fetchone()
 
             if not row:
-                return await interaction.response.send_message("❌ Invalid coupon.", ephemeral=True)
+                return await interaction.response.send_message(
+                    "❌ Invalid coupon.", ephemeral=True
+                )
 
             ctype, value, max_uses, used, expires = row
+            now = int(time.time())
 
-            if expires and expires < int(time.time()):
-                return await interaction.response.send_message("❌ Coupon expired.", ephemeral=True)
+            if expires and expires < now:
+                return await interaction.response.send_message(
+                    "❌ Coupon expired.", ephemeral=True
+                )
 
             if used >= max_uses:
-                return await interaction.response.send_message("❌ Coupon limit reached.", ephemeral=True)
+                return await interaction.response.send_message(
+                    "❌ Coupon usage limit reached.", ephemeral=True
+                )
 
-            if ctype == "percent":
+            if ctype == "premium":
                 discount = int(base_price * (value / 100))
-            elif ctype == "flat":
+            elif ctype == "coins":
                 discount = value
 
         final_price = max(base_price - discount, 0)
 
         # ===== BALANCE CHECK =====
         async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT balance FROM coins WHERE user_id=?", (user_id,)) as cur:
-                row = await cur.fetchone()
-                balance = row[0] if row else 0
+            async with db.execute(
+                "SELECT balance FROM coins WHERE user_id=?",
+                (user_id,)
+            ) as cur:
+                balance = (await cur.fetchone())[0]
 
         if balance < final_price:
             return await interaction.response.send_message(
@@ -84,14 +100,21 @@ class BuyPremiumModal(discord.ui.Modal):
 
         # ===== APPLY PURCHASE =====
         async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("UPDATE coins SET balance=balance-? WHERE user_id=?", (final_price, user_id))
+            await db.execute(
+                "UPDATE coins SET balance=balance-? WHERE user_id=?",
+                (final_price, user_id)
+            )
+
             await db.execute(
                 "INSERT OR REPLACE INTO premium (user_id,tier,expires) VALUES (?,?,?)",
                 (user_id, tier, expires)
             )
 
             if coupon_code:
-                await db.execute("UPDATE coupons SET used = used + 1 WHERE code=?", (coupon_code,))
+                await db.execute(
+                    "UPDATE coupons SET used = used + 1 WHERE code=?",
+                    (coupon_code,)
+                )
 
             await db.commit()
 
@@ -107,7 +130,7 @@ class BuyPremiumModal(discord.ui.Modal):
         )
 
 
-# ================= RENEW BUTTON VIEW =================
+# ================= RENEW VIEW =================
 class RenewView(discord.ui.View):
     def __init__(self, tier):
         super().__init__(timeout=None)
@@ -118,20 +141,20 @@ class RenewView(discord.ui.View):
         await interaction.response.send_modal(BuyPremiumModal(self.tier))
 
 
-# ================= SHOP BUTTON VIEW =================
+# ================= SHOP VIEW =================
 class CoinShopView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Bronze (3 Days)", emoji="🥉", style=discord.ButtonStyle.secondary, custom_id="buy_bronze")
+    @discord.ui.button(label="Bronze (3 Days)", emoji="🥉", style=discord.ButtonStyle.secondary)
     async def bronze(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal("bronze"))
 
-    @discord.ui.button(label="Silver (5 Days)", emoji="🥈", style=discord.ButtonStyle.primary, custom_id="buy_silver")
+    @discord.ui.button(label="Silver (5 Days)", emoji="🥈", style=discord.ButtonStyle.primary)
     async def silver(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal("silver"))
 
-    @discord.ui.button(label="Gold (7 Days)", emoji="🥇", style=discord.ButtonStyle.success, custom_id="buy_gold")
+    @discord.ui.button(label="Gold (7 Days)", emoji="🥇", style=discord.ButtonStyle.success)
     async def gold(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal("gold"))
 
@@ -148,20 +171,18 @@ class CoinShop(commands.Cog):
             return await interaction.response.send_message("❌ Admin only.", ephemeral=True)
 
         embed = discord.Embed(
-            title="👑 PSG Family Premium Shop",
+            title="👑 Premium Shop",
             description=(
                 "🥉 Bronze – 100 Coins (3 Days)\n"
                 "🥈 Silver – 200 Coins (5 Days)\n"
-                "🥇 Gold – 300 Coins (7 Days)\n\n"
-                "🎟 Coupon supported\n"
-                "Click a button below to buy premium."
+                "🥇 Gold – 300 Coins (7 Days)\n"
             ),
             color=discord.Color.gold()
         )
         embed.set_thumbnail(url=LOGO_URL)
 
         await channel.send(embed=embed, view=CoinShopView())
-        await interaction.response.send_message("✅ Coin shop panel created.", ephemeral=True)
+        await interaction.response.send_message("✅ Panel created.", ephemeral=True)
 
     # ================= AUTO EXPIRY + REMINDER =================
     @tasks.loop(minutes=1)
@@ -175,20 +196,19 @@ class CoinShop(commands.Cog):
         for user_id, tier, expires in rows:
             remaining = expires - now
 
-            # ===== 1 DAY REMINDER WITH BUTTON =====
+            # 1 day reminder
             if 86000 <= remaining <= 86400:
                 user = self.bot.get_user(user_id)
                 if user:
                     try:
                         await user.send(
-                            f"⏰ **Your {tier.capitalize()} Premium will expire in 1 day.**\n"
-                            "Click below to renew.",
+                            f"⏰ Your {tier.capitalize()} Premium expires in 1 day.",
                             view=RenewView(tier)
                         )
                     except:
                         pass
 
-            # ===== EXPIRED =====
+            # expired
             if expires <= now:
                 async with aiosqlite.connect(DB_NAME) as db:
                     await db.execute("DELETE FROM premium WHERE user_id=?", (user_id,))
