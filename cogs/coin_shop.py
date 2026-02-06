@@ -136,7 +136,12 @@ class RenewView(discord.ui.View):
         super().__init__(timeout=None)
         self.tier = tier
 
-    @discord.ui.button(label="Renew Premium", style=discord.ButtonStyle.success, emoji="🔄")
+    @discord.ui.button(
+        label="Renew Premium",
+        style=discord.ButtonStyle.success,
+        emoji="🔄",
+        custom_id="renew_premium_button"
+    )
     async def renew(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal(self.tier))
 
@@ -146,15 +151,30 @@ class CoinShopView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Bronze (3 Days)", emoji="🥉", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(
+        label="Bronze (3 Days)",
+        emoji="🥉",
+        style=discord.ButtonStyle.secondary,
+        custom_id="buy_bronze"
+    )
     async def bronze(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal("bronze"))
 
-    @discord.ui.button(label="Silver (5 Days)", emoji="🥈", style=discord.ButtonStyle.primary)
+    @discord.ui.button(
+        label="Silver (5 Days)",
+        emoji="🥈",
+        style=discord.ButtonStyle.primary,
+        custom_id="buy_silver"
+    )
     async def silver(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal("silver"))
 
-    @discord.ui.button(label="Gold (7 Days)", emoji="🥇", style=discord.ButtonStyle.success)
+    @discord.ui.button(
+        label="Gold (7 Days)",
+        emoji="🥇",
+        style=discord.ButtonStyle.success,
+        custom_id="buy_gold"
+    )
     async def gold(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BuyPremiumModal("gold"))
 
