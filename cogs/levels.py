@@ -2,6 +2,7 @@ import discord
 import aiosqlite
 import random
 import time
+import os
 from discord.ext import commands
 from discord import app_commands
 from PIL import Image, ImageDraw, ImageFont
@@ -20,32 +21,41 @@ def xp_needed(level: int):
     return 100 + (level * 50)
 
 
-# ================= FONT =================
+# ================= SAFE FONT =================
 def get_font(size):
-    return ImageFont.truetype(FONT_PATH, size)
+    try:
+        if os.path.exists(FONT_PATH):
+            return ImageFont.truetype(FONT_PATH, size)
+    except:
+        pass
+    return ImageFont.load_default()
 
 
 # ================= RANK CARD =================
 async def generate_rank_card(member, level, coins):
-    # Load background
-    r = requests.get(CARD_BG_URL, timeout=10)
-    bg = Image.open(BytesIO(r.content)).convert("RGB")
-    bg = bg.resize((900, 300))
+    try:
+        r = requests.get(CARD_BG_URL, timeout=10)
+        bg = Image.open(BytesIO(r.content)).convert("RGB")
+    except:
+        bg = Image.new("RGB", (900, 300), (30, 30, 30))
 
+    bg = bg.resize((900, 300))
     draw = ImageDraw.Draw(bg)
 
     # Avatar
-    avatar_bytes = await member.display_avatar.read()
-    avatar = Image.open(BytesIO(avatar_bytes)).resize((180, 180)).convert("RGBA")
-    bg.paste(avatar, (40, 60), avatar)
+    try:
+        avatar_bytes = await member.display_avatar.read()
+        avatar = Image.open(BytesIO(avatar_bytes)).resize((180, 180)).convert("RGBA")
+        bg.paste(avatar, (40, 60), avatar)
+    except:
+        pass
 
-    # Text
-    font_big = get_font(50)
-    font_small = get_font(30)
+    font_big = get_font(40)
+    font_small = get_font(25)
 
     draw.text((250, 80), member.name, font=font_big, fill="white")
     draw.text((250, 150), f"Level {level}", font=font_small, fill="gold")
-    draw.text((250, 200), f"+{coins} coins earned!", font=font_small, fill="cyan")
+    draw.text((250, 200), f"+{coins} coins", font=font_small, fill="cyan")
 
     buf = BytesIO()
     bg.save(buf, "PNG")
@@ -69,7 +79,7 @@ class Levels(commands.Cog):
         guild_id = message.guild.id
         now = time.time()
 
-        # 10s cooldown
+        # 10 second cooldown
         if user_id in self.cooldowns:
             if now - self.cooldowns[user_id] < 10:
                 return
@@ -100,7 +110,7 @@ class Levels(commands.Cog):
                     level += 1
                     xp -= needed
 
-                    # COIN REWARD
+                    # Coin reward
                     coins = 20
                     if level % 5 == 0:
                         coins += 50
@@ -116,7 +126,7 @@ class Levels(commands.Cog):
 
                     await db.commit()
 
-                    # SEND RANK CARD
+                    # Send rank card
                     await self.send_rank_card(message, level, coins)
 
                 await db.execute(
@@ -126,7 +136,7 @@ class Levels(commands.Cog):
 
             await db.commit()
 
-    # ---------------- SEND CARD ----------------
+    # ---------------- SEND RANK CARD ----------------
     async def send_rank_card(self, message, level, coins):
         card = await generate_rank_card(message.author, level, coins)
 
@@ -140,41 +150,38 @@ class Levels(commands.Cog):
     async def level_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
         await interaction.response.defer()
 
-        if member is None:
-            member = interaction.user
+        try:
+            if member is None:
+                member = interaction.user
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            # Get level
-            cur = await db.execute(
-                "SELECT level FROM levels WHERE user_id=? AND guild_id=?",
-                (member.id, interaction.guild.id)
+            async with aiosqlite.connect(DB_NAME) as db:
+                cur = await db.execute(
+                    "SELECT level FROM levels WHERE user_id=? AND guild_id=?",
+                    (member.id, interaction.guild.id)
+                )
+                row = await cur.fetchone()
+                level = row[0] if row else 1
+
+                cur = await db.execute(
+                    "SELECT balance FROM coins WHERE user_id=?",
+                    (member.id,)
+                )
+                row = await cur.fetchone()
+                coins = row[0] if row else 0
+
+            card = await generate_rank_card(member, level, coins)
+
+            await interaction.followup.send(
+                file=discord.File(card, "rank.png")
             )
-            row = await cur.fetchone()
-            level = row[0] if row else 1
 
-            # Get coins
-            cur = await db.execute(
-                "SELECT balance FROM coins WHERE user_id=?",
-                (member.id,)
-            )
-            row = await cur.fetchone()
-            coins = row[0] if row else 0
-
-        card = await generate_rank_card(member, level, coins)
-
-        await interaction.followup.send(
-            file=discord.File(card, "rank.png")
-        )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}")
 
     # ---------------- ADMIN ADD LEVEL ----------------
     @app_commands.command(name="addlevel", description="Admin: Add levels to a user")
     @app_commands.checks.has_permissions(administrator=True)
-    async def addlevel(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        levels: int
-    ):
+    async def addlevel(self, interaction: discord.Interaction, member: discord.Member, levels: int):
         await interaction.response.defer(ephemeral=True)
 
         if levels <= 0:
@@ -217,7 +224,7 @@ class Levels(commands.Cog):
         card = await generate_rank_card(member, new_level, coin_reward)
 
         await interaction.channel.send(
-            content=f"🆙 {member.mention} was boosted!\n+{levels} levels",
+            content=f"🆙 {member.mention} gained {levels} levels!",
             file=discord.File(card, "rank.png")
         )
 
@@ -226,12 +233,7 @@ class Levels(commands.Cog):
     # ---------------- ADMIN ADD XP ----------------
     @app_commands.command(name="addxp", description="Admin: Add XP to a user")
     @app_commands.checks.has_permissions(administrator=True)
-    async def addxp(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        xp_amount: int
-    ):
+    async def addxp(self, interaction: discord.Interaction, member: discord.Member, xp_amount: int):
         await interaction.response.defer(ephemeral=True)
 
         if xp_amount <= 0:
