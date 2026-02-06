@@ -1,152 +1,120 @@
 import discord
 import aiosqlite
-import time
-import requests
 from discord.ext import commands
 from discord import app_commands
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
-import os
 
 DB_NAME = "bot.db"
 
 # ================= CONFIG =================
-LEVEL_CHANNEL_ID = 1465720466420269121  # ← PUT YOUR LEVEL CHANNEL ID HERE
-CARD_BG_URL = "https://files.catbox.moe/yslxzu.png"
-FONT_PATH = "fonts/CinzelDecorative-Bold.ttf"
-
-XP_PER_MESSAGE = 15
+XP_PER_MESSAGE = 10
 COINS_PER_LEVEL = 20
-COOLDOWN = 10  # seconds
+
+# Only this channel gives XP
+LEVEL_CHANNEL_ID = 123456789012345678  # <-- CHANGE THIS
 
 
-# ================= FONT =================
-def get_font(size: int):
-    return ImageFont.truetype(FONT_PATH, size)
-
-
-# ================= XP FORMULA =================
+# ================= LEVEL FORMULA =================
 def xp_needed(level: int):
     return 100 + (level * 50)
 
 
 # ================= RANK CARD =================
-async def generate_rank_card(member, level, xp, coins):
-    try:
-        r = requests.get(CARD_BG_URL, timeout=10)
-        bg = Image.open(BytesIO(r.content)).convert("RGB")
-    except:
-        bg = Image.new("RGB", (900, 300), (30, 30, 30))
-
-    bg = bg.resize((900, 300))
-    draw = ImageDraw.Draw(bg)
-
-    # Avatar
-    try:
-        avatar_bytes = await member.display_avatar.read()
-        avatar = Image.open(BytesIO(avatar_bytes)).resize((180, 180)).convert("RGBA")
-        bg.paste(avatar, (40, 60), avatar)
-    except:
-        pass
+def generate_rank_card(username, avatar_bytes, level, xp, needed, coins):
+    W, H = 900, 300
+    img = Image.new("RGB", (W, H), (20, 20, 20))
+    draw = ImageDraw.Draw(img)
 
     # Fonts
-    font_big = get_font(42)
-    font_mid = get_font(28)
-    font_small = get_font(24)
+    try:
+        name_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 50)
+        level_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 36)
+        small_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 26)
+    except:
+        name_font = level_font = small_font = ImageFont.load_default()
+
+    # Avatar
+    avatar = Image.open(BytesIO(avatar_bytes)).resize((150, 150)).convert("RGBA")
+    img.paste(avatar, (30, 75), avatar)
 
     # Text
-    draw.text((250, 60), member.name.upper(), font=font_big, fill="white")
-    draw.text((250, 120), f"LEVEL {level}", font=font_mid, fill="gold")
-    draw.text((250, 140), f"+{coins} COINS", font=font_mid, fill="cyan")
-
-    # XP BAR
-    needed = xp_needed(level)
-    progress = min(xp / needed, 1.0)
-
-    bar_x = 250
-    bar_y = 220
-    bar_width = 500
-    bar_height = 25
-
-    # Background
-    draw.rectangle(
-        (bar_x, bar_y, bar_x + bar_width, bar_y + bar_height),
-        fill=(60, 60, 60)
-    )
-
-    # Progress
-    draw.rectangle(
-        (
-            bar_x,
-            bar_y,
-            bar_x + int(bar_width * progress),
-            bar_y + bar_height
-        ),
-        fill=(0, 200, 255)
-    )
+    draw.text((220, 40), username, font=name_font, fill="white")
+    draw.text((220, 120), f"LEVEL {level}", font=level_font, fill="gold")
+    draw.text((220, 155), f"+{coins} COINS", font=level_font, fill=(0, 255, 200))
 
     # XP text
-    draw.text(
-        (bar_x, bar_y - 30),
-        f"XP: {xp} / {needed}",
-        font=font_small,
-        fill="white"
-    )
+    draw.text((220, 210), f"XP: {xp} / {needed}", font=small_font, fill="white")
+
+    # XP BAR
+    bar_x = 220
+    bar_y = 250
+    bar_w = 600
+    bar_h = 25
+
+    progress = int((xp / needed) * bar_w)
+
+    draw.rectangle((bar_x, bar_y, bar_x + bar_w, bar_y + bar_h), fill=(60, 60, 60))
+    draw.rectangle((bar_x, bar_y, bar_x + progress, bar_y + bar_h), fill=(0, 200, 255))
 
     buf = BytesIO()
-    bg.save(buf, "PNG")
+    img.save(buf, "PNG")
     buf.seek(0)
     return buf
 
 
-# ================= COG =================
+# ================= LEVEL COG =================
 class Levels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.cooldowns = {}
 
-    # ================= MESSAGE XP =================
+    # ---------------- XP LISTENER ----------------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
 
+        # Only allow XP in one channel
         if message.channel.id != LEVEL_CHANNEL_ID:
             return
 
         user_id = message.author.id
         guild_id = message.guild.id
 
-        now = time.time()
-        if user_id in self.cooldowns:
-            if now - self.cooldowns[user_id] < COOLDOWN:
-                return
-
-        self.cooldowns[user_id] = now
-
         async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-                INSERT OR IGNORE INTO levels (user_id, guild_id, xp, level)
-                VALUES (?, ?, 0, 1)
-            """, (user_id, guild_id))
-
-            cur = await db.execute("""
-                SELECT xp, level FROM levels
-                WHERE user_id=? AND guild_id=?
-            """, (user_id, guild_id))
+            cur = await db.execute(
+                "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
+                (user_id, guild_id)
+            )
             row = await cur.fetchone()
 
-            xp, level = row
-            xp += XP_PER_MESSAGE
-
-            needed = xp_needed(level)
-
-            if xp >= needed:
-                level += 1
+            if not row:
                 xp = 0
-                coins = level * COINS_PER_LEVEL
+                level = 1
+                await db.execute(
+                    "INSERT INTO levels (user_id, guild_id, xp, level) VALUES (?,?,?,?)",
+                    (user_id, guild_id, xp, level)
+                )
+            else:
+                xp, level = row
 
-                # add coins
+            xp += XP_PER_MESSAGE
+            coins = 0
+
+            # MULTI LEVEL SYSTEM
+            while xp >= xp_needed(level):
+                xp -= xp_needed(level)
+                level += 1
+                coins += level * COINS_PER_LEVEL
+
+            # Save level data
+            await db.execute(
+                "UPDATE levels SET xp=?, level=? WHERE user_id=? AND guild_id=?",
+                (xp, level, user_id, guild_id)
+            )
+
+            # Reward coins
+            if coins > 0:
                 await db.execute(
                     "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?,0)",
                     (user_id,)
@@ -156,84 +124,105 @@ class Levels(commands.Cog):
                     (coins, user_id)
                 )
 
-                await self.send_rank_card(message, level, xp, coins)
-
-            await db.execute("""
-                UPDATE levels
-                SET xp=?, level=?
-                WHERE user_id=? AND guild_id=?
-            """, (xp, level, user_id, guild_id))
-
             await db.commit()
 
-    # ================= SEND CARD =================
+        # Send level-up card
+        if coins > 0:
+            await self.send_rank_card(message, level, xp, coins)
+
+    # ---------------- RANK CARD SEND ----------------
     async def send_rank_card(self, message, level, xp, coins):
-        card = await generate_rank_card(message.author, level, xp, coins)
+        avatar = await message.author.display_avatar.read()
+        needed = xp_needed(level)
+
+        card = generate_rank_card(
+            message.author.name,
+            avatar,
+            level,
+            xp,
+            needed,
+            coins
+        )
 
         await message.channel.send(
             content=f"🎉 {message.author.mention} leveled up!",
             file=discord.File(card, "rank.png")
         )
 
-    # ================= /LEVEL =================
-    @app_commands.command(name="level", description="View your level")
+    # ---------------- /LEVEL ----------------
+    @app_commands.command(name="level", description="Check your level")
     async def level_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
         member = member or interaction.user
+        user_id = member.id
+        guild_id = interaction.guild.id
 
         async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("""
-                SELECT xp, level FROM levels
-                WHERE user_id=? AND guild_id=?
-            """, (member.id, interaction.guild.id))
+            cur = await db.execute(
+                "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
+                (user_id, guild_id)
+            )
             row = await cur.fetchone()
 
-            if not row:
-                return await interaction.response.send_message(
-                    "No level data.",
-                    ephemeral=True
-                )
+        if not row:
+            return await interaction.response.send_message("No level data yet.", ephemeral=True)
 
-            xp, level = row
+        xp, level = row
+        needed = xp_needed(level)
 
-            cur = await db.execute(
-                "SELECT balance FROM coins WHERE user_id=?",
-                (member.id,)
-            )
-            coin_row = await cur.fetchone()
-            coins = coin_row[0] if coin_row else 0
-
-        card = await generate_rank_card(member, level, xp, coins)
+        avatar = await member.display_avatar.read()
+        card = generate_rank_card(member.name, avatar, level, xp, needed, 0)
 
         await interaction.response.send_message(
             file=discord.File(card, "rank.png")
         )
 
-    # ================= /ADDXP =================
-    @app_commands.command(name="addxp", description="Add XP to a user")
+    # ---------------- /ADDXP ----------------
+    @app_commands.command(name="addxp", description="Admin: Add XP to a user")
     @app_commands.checks.has_permissions(administrator=True)
-    async def addxp(
-        self,
-        interaction: discord.Interaction,
-        member: discord.Member,
-        amount: int
-    ):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-                INSERT OR IGNORE INTO levels (user_id, guild_id, xp, level)
-                VALUES (?, ?, 0, 1)
-            """, (member.id, interaction.guild.id))
+    async def addxp(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+        user_id = member.id
+        guild_id = interaction.guild.id
 
-            await db.execute("""
-                UPDATE levels
-                SET xp = xp + ?
-                WHERE user_id=? AND guild_id=?
-            """, (amount, member.id, interaction.guild.id))
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
+                (user_id, guild_id)
+            )
+            row = await cur.fetchone()
+
+            if not row:
+                xp = 0
+                level = 1
+            else:
+                xp, level = row
+
+            xp += amount
+            coins = 0
+
+            while xp >= xp_needed(level):
+                xp -= xp_needed(level)
+                level += 1
+                coins += level * COINS_PER_LEVEL
+
+            await db.execute(
+                "INSERT OR REPLACE INTO levels (user_id, guild_id, xp, level) VALUES (?,?,?,?)",
+                (user_id, guild_id, xp, level)
+            )
+
+            if coins > 0:
+                await db.execute(
+                    "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?,0)",
+                    (user_id,)
+                )
+                await db.execute(
+                    "UPDATE coins SET balance = balance + ? WHERE user_id=?",
+                    (coins, user_id)
+                )
 
             await db.commit()
 
         await interaction.response.send_message(
-            f"✅ Added {amount} XP to {member.mention}",
-            ephemeral=True
+            f"✅ Added {amount} XP to {member.mention}"
         )
 
 
