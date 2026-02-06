@@ -57,7 +57,7 @@ async def generate_rank_card(member, level, xp, coins):
     # Text
     draw.text((250, 60), member.name.upper(), font=font_big, fill="white")
     draw.text((250, 120), f"LEVEL {level}", font=font_mid, fill="gold")
-    draw.text((250, 170), f"+{coins} COINS", font=font_mid, fill="cyan")
+    draw.text((250, 140), f"+{coins} COINS", font=font_mid, fill="cyan")
 
     # XP BAR
     needed = xp_needed(level)
