@@ -1,11 +1,12 @@
 import discord
-import time, random, aiosqlite, requests
+import time, random, aiosqlite, requests, json, os
 from discord.ext import commands, tasks
 from discord import app_commands
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
 DB_NAME = "bot.db"
+POS_FILE = "invoice_positions.json"
 
 # ================= CONFIG =================
 PRICES = {"bronze": 100, "silver": 200, "gold": 300}
@@ -17,65 +18,60 @@ PREMIUM_ROLE_IDS = {
     "gold": 1463884209025187880
 }
 
-LOGO_URL = "https://files.catbox.moe/mrpfrf.webp"
+INVOICE_BG = "https://files.catbox.moe/ah29yy.png"
+
+
+# ================= POSITION SYSTEM =================
+default_positions = {
+    "date": [700, 260],
+    "invoice_id": [250, 320],
+    "customer": [300, 380],
+    "tier": [250, 440],
+    "days": [250, 500],
+    "paid": [350, 560]
+}
+
+def load_positions():
+    if not os.path.exists(POS_FILE):
+        with open(POS_FILE, "w") as f:
+            json.dump(default_positions, f, indent=4)
+        return default_positions
+    with open(POS_FILE) as f:
+        return json.load(f)
+
+def save_positions(data):
+    with open(POS_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
 
 # ================= PREMIUM INVOICE IMAGE =================
 def generate_premium_invoice(username: str, tier: str, days: int, coins: int):
-    W, H = 1000, 700
-    img = Image.new("RGB", (W, H), (10, 10, 10))
-    draw = ImageDraw.Draw(img)
+    pos = load_positions()
 
-    gold = (255, 200, 60)
+    try:
+        bg = Image.open(BytesIO(requests.get(INVOICE_BG).content)).convert("RGB")
+        img = bg.resize((1000, 650))
+    except:
+        img = Image.new("RGB", (1000, 650), (10, 10, 10))
+
+    draw = ImageDraw.Draw(img)
     white = (255, 255, 255)
     green = (0, 255, 0)
 
     try:
-        # Bigger fonts
-        title_font = ImageFont.truetype("arial.ttf", 60)
-        sub_font = ImageFont.truetype("arial.ttf", 36)
-        text_font = ImageFont.truetype("arial.ttf", 30)
-        small_font = ImageFont.truetype("arial.ttf", 26)
+        text_font = ImageFont.truetype("arial.ttf", 32)
     except:
-        title_font = sub_font = text_font = small_font = ImageFont.load_default()
-
-    # Logo
-    try:
-        logo = Image.open(BytesIO(requests.get(LOGO_URL).content)).resize((140, 140))
-        img.paste(logo, (430, 20), logo if logo.mode == "RGBA" else None)
-    except:
-        pass
+        text_font = ImageFont.load_default()
 
     invoice_id = f"PSG-{random.randint(10000,99999)}"
     date = time.strftime("%d / %m / %Y")
 
-    # Title
-    draw.text((340, 170), "PSG FAMILY", fill=gold, font=title_font)
-    draw.text((330, 235), "Premium Invoice", fill=gold, font=sub_font)
-
-    # Table
-    y = 300
-    row_h = 55
-    for _ in range(6):
-        draw.rectangle((80, y, 920, y + row_h), outline=gold, width=2)
-        y += row_h
-
-    # Content
-    draw.text((100, 310), f"Invoice ID: {invoice_id}", fill=white, font=text_font)
-    draw.text((650, 310), f"Date: {date}", fill=white, font=text_font)
-
-    draw.text((100, 365), f"Customer: {username}", fill=white, font=text_font)
-
-    draw.text((100, 420), "Premium Details", fill=gold, font=sub_font)
-    draw.text((100, 475), f"Tier: {tier.capitalize()}", fill=white, font=text_font)
-    draw.text((100, 525), f"Duration: {days} Days", fill=white, font=text_font)
-    draw.text((100, 575), f"Coins Paid: {coins}", fill=white, font=text_font)
-
-    draw.text((100, 630), "Payment Status:", fill=white, font=text_font)
-    draw.text((350, 630), "PAID", fill=green, font=text_font)
-
-    draw.text((600, 575), "Authorized By:", fill=white, font=small_font)
-    draw.text((600, 610), "PSG FAMILY", fill=white, font=text_font)
+    draw.text(tuple(pos["date"]), date, fill=white, font=text_font)
+    draw.text(tuple(pos["invoice_id"]), invoice_id, fill=white, font=text_font)
+    draw.text(tuple(pos["customer"]), username, fill=white, font=text_font)
+    draw.text(tuple(pos["tier"]), tier.capitalize(), fill=white, font=text_font)
+    draw.text(tuple(pos["days"]), f"{days} Days", fill=white, font=text_font)
+    draw.text(tuple(pos["paid"]), "PAID", fill=green, font=text_font)
 
     buf = BytesIO()
     img.save(buf, "PNG")
@@ -106,84 +102,25 @@ class BuyPremiumModal(discord.ui.Modal):
     def __init__(self, tier):
         super().__init__(title="Buy Premium - PSG Family")
         self.tier = tier
-
         self.name = discord.ui.TextInput(label="Your Name")
-        self.coupon = discord.ui.TextInput(
-            label="Coupon Code (optional)",
-            required=False,
-            placeholder="Enter coupon code if any"
-        )
-
         self.add_item(self.name)
-        self.add_item(self.coupon)
 
     async def on_submit(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         tier = self.tier
-        base_price = PRICES[tier]
-        discount = 0
+        final_price = PRICES[tier]
 
-        coupon_code = self.coupon.value.strip().upper()
-
-        # ===== COUPON CHECK =====
-        if coupon_code:
-            async with aiosqlite.connect(DB_NAME) as db:
-                async with db.execute(
-                    "SELECT type,value,max_uses,used,expires FROM coupons WHERE code=?",
-                    (coupon_code,)
-                ) as cur:
-                    row = await cur.fetchone()
-
-            if not row:
-                return await interaction.response.send_message("❌ Invalid coupon code.", ephemeral=True)
-
-            ctype, value, max_uses, used, expires = row
-
-            if expires and expires < int(time.time()):
-                return await interaction.response.send_message("❌ Coupon expired.", ephemeral=True)
-
-            if used >= max_uses:
-                return await interaction.response.send_message("❌ Coupon limit reached.", ephemeral=True)
-
-            if ctype == "percent":
-                discount = int(base_price * (value / 100))
-            elif ctype == "flat":
-                discount = value
-
-        final_price = max(base_price - discount, 0)
-
-        # ===== BALANCE CHECK =====
         async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT balance FROM coins WHERE user_id=?", (user_id,)) as cur:
-                row = await cur.fetchone()
-                balance = row[0] if row else 0
-
-        if balance < final_price:
-            return await interaction.response.send_message(
-                f"❌ Not enough coins. Need `{final_price}` coins.",
-                ephemeral=True
-            )
-
-        expires = int(time.time()) + DAYS[tier] * 86400
-
-        # ===== APPLY PURCHASE =====
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("UPDATE coins SET balance=balance-? WHERE user_id=?", (final_price, user_id))
             await db.execute(
                 "INSERT OR REPLACE INTO premium (user_id,tier,expires) VALUES (?,?,?)",
-                (user_id, tier, expires)
+                (user_id, tier, int(time.time()) + DAYS[tier] * 86400)
             )
-
-            if coupon_code:
-                await db.execute("UPDATE coupons SET used = used + 1 WHERE code=?", (coupon_code,))
-
             await db.commit()
 
         role = interaction.guild.get_role(PREMIUM_ROLE_IDS[tier])
         if role:
             await interaction.user.add_roles(role)
 
-        # ===== GENERATE INVOICE IMAGE =====
         invoice_img = generate_premium_invoice(
             interaction.user.name,
             tier,
@@ -197,14 +134,6 @@ class BuyPremiumModal(discord.ui.Modal):
             ephemeral=True
         )
 
-        try:
-            await interaction.user.send(
-                "🧾 **Your PSG Family Premium Invoice**",
-                file=discord.File(invoice_img, "premium_invoice.png")
-            )
-        except:
-            pass
-
 
 # ================= VIEW =================
 class CoinShopView(discord.ui.View):
@@ -217,53 +146,41 @@ class CoinShopView(discord.ui.View):
 class CoinShop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.expiry_task.start()
 
-    @app_commands.command(name="coin_shop_panel", description="Create premium shop panel")
-    async def coin_shop_panel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    # ---------- Invoice Preview ----------
+    @app_commands.command(name="invoice_preview", description="Preview premium invoice")
+    async def invoice_preview(self, interaction: discord.Interaction, user: discord.Member, tier: str):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Admin only.", ephemeral=True)
 
-        embed = discord.Embed(
-            title="👑 PSG Family Premium Shop",
-            description=(
-                "🥉 Bronze – 100 Coins (3 Days)\n"
-                "🥈 Silver – 200 Coins (5 Days)\n"
-                "🥇 Gold – 300 Coins (7 Days)\n\n"
-                "🎟 Coupon supported (optional)\n"
-                "Click below to buy premium."
-            ),
-            color=discord.Color.gold()
+        tier = tier.lower()
+        if tier not in PRICES:
+            return await interaction.response.send_message("Invalid tier.", ephemeral=True)
+
+        img = generate_premium_invoice(user.name, tier, DAYS[tier], PRICES[tier])
+        await interaction.response.send_message(file=discord.File(img, "preview.png"))
+
+    # ---------- Invoice Position Edit ----------
+    @app_commands.command(name="invoice_edit", description="Edit invoice text position")
+    async def invoice_edit(self, interaction: discord.Interaction, field: str, x: int, y: int):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+
+        pos = load_positions()
+
+        if field not in pos:
+            return await interaction.response.send_message(
+                "Invalid field. Options: date, invoice_id, customer, tier, days, paid",
+                ephemeral=True
+            )
+
+        pos[field] = [x, y]
+        save_positions(pos)
+
+        await interaction.response.send_message(
+            f"✅ Updated **{field}** position to ({x}, {y})",
+            ephemeral=True
         )
-        embed.set_thumbnail(url=LOGO_URL)
-
-        await channel.send(embed=embed, view=CoinShopView())
-        await interaction.response.send_message("✅ Coin shop panel created.", ephemeral=True)
-
-    # ================= AUTO EXPIRY =================
-    @tasks.loop(minutes=1)
-    async def expiry_task(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT user_id,tier,expires FROM premium") as cur:
-                rows = await cur.fetchall()
-
-        now = int(time.time())
-        for user_id, tier, expires in rows:
-            if expires <= now:
-                async with aiosqlite.connect(DB_NAME) as db:
-                    await db.execute("DELETE FROM premium WHERE user_id=?", (user_id,))
-                    await db.commit()
-
-                for guild in self.bot.guilds:
-                    member = guild.get_member(user_id)
-                    if member:
-                        role = guild.get_role(PREMIUM_ROLE_IDS[tier])
-                        if role:
-                            await member.remove_roles(role)
-
-    @expiry_task.before_loop
-    async def before_expiry(self):
-        await self.bot.wait_until_ready()
 
 
 # ================= SETUP =================
