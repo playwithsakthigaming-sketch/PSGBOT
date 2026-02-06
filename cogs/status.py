@@ -74,7 +74,7 @@ class Status(commands.Cog):
         )
 
         embed.set_thumbnail(url=self.bot.user.display_avatar.url)
-        embed.set_image(url="https://your-banner-image-link.png")
+        embed.set_image(url="https://files.catbox.moe/c1lm6g.png")
 
         return embed
 
