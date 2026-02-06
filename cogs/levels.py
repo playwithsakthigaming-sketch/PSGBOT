@@ -9,9 +9,9 @@ from io import BytesIO
 DB_NAME = "bot.db"
 
 # ================= CONFIG =================
-XP_PER_MESSAGE = 10
-VOICE_XP_PER_MIN = 5
-COINS_PER_LEVEL = 20
+XP_PER_MESSAGE = 8
+VOICE_XP_PER_MIN = 9
+COINS_PER_LEVEL = 10
 
 # Level-up messages go only here
 LEVEL_UP_CHANNEL_ID = 1415142396341256275  # change this
