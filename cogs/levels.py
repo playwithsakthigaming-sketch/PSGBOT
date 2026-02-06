@@ -14,7 +14,7 @@ VOICE_XP_PER_MIN = 5
 COINS_PER_LEVEL = 20
 
 # Level-up messages go only here
-LEVEL_UP_CHANNEL_ID = 123456789012345678  # change this
+LEVEL_UP_CHANNEL_ID = 1415142396341256275  # change this
 
 # Premium XP boost
 PREMIUM_BOOST = {
@@ -32,7 +32,7 @@ PREMIUM_ANIMATED = {
 
 # Level roles
 LEVEL_ROLES = {
-    5: 111111111111111111,
+    5: 1464425870675411064,
     10: 222222222222222222,
     20: 333333333333333333
 }
@@ -88,7 +88,7 @@ def generate_rank_card(username, avatar_bytes, level, xp, needed, coins):
 
     try:
         name_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 50)
-        level_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 36)
+        level_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 33)
         small_font = ImageFont.truetype("fonts/CinzelDecorative-Bold.ttf", 26)
     except:
         name_font = level_font = small_font = ImageFont.load_default()
