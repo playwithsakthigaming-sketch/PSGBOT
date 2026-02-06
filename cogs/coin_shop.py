@@ -22,7 +22,7 @@ LOGO_URL = "https://files.catbox.moe/mrpfrf.webp"
 
 # ================= PREMIUM INVOICE IMAGE =================
 def generate_premium_invoice(username: str, tier: str, days: int, coins: int):
-    W, H = 1000, 650
+    W, H = 1000, 700
     img = Image.new("RGB", (W, H), (10, 10, 10))
     draw = ImageDraw.Draw(img)
 
@@ -31,46 +31,51 @@ def generate_premium_invoice(username: str, tier: str, days: int, coins: int):
     green = (0, 255, 0)
 
     try:
-        title_font = ImageFont.truetype("arial.ttf", 46)
-        sub_font = ImageFont.truetype("arial.ttf", 28)
-        text_font = ImageFont.truetype("arial.ttf", 24)
+        # Bigger fonts
+        title_font = ImageFont.truetype("arial.ttf", 60)
+        sub_font = ImageFont.truetype("arial.ttf", 36)
+        text_font = ImageFont.truetype("arial.ttf", 30)
+        small_font = ImageFont.truetype("arial.ttf", 26)
     except:
-        title_font = sub_font = text_font = ImageFont.load_default()
+        title_font = sub_font = text_font = small_font = ImageFont.load_default()
 
     # Logo
     try:
-        logo = Image.open(BytesIO(requests.get(LOGO_URL).content)).resize((120,120))
-        img.paste(logo, (440, 20), logo if logo.mode=="RGBA" else None)
+        logo = Image.open(BytesIO(requests.get(LOGO_URL).content)).resize((140, 140))
+        img.paste(logo, (430, 20), logo if logo.mode == "RGBA" else None)
     except:
         pass
 
     invoice_id = f"PSG-{random.randint(10000,99999)}"
     date = time.strftime("%d / %m / %Y")
 
-    draw.text((360, 150), "PSG FAMILY", fill=gold, font=title_font)
-    draw.text((310, 200), "Official Premium Invoice", fill=gold, font=sub_font)
+    # Title
+    draw.text((340, 170), "PSG FAMILY", fill=gold, font=title_font)
+    draw.text((330, 235), "Premium Invoice", fill=gold, font=sub_font)
 
-    y = 260
-    row_h = 45
-    for _ in range(7):
-        draw.rectangle((80, y, 920, y+row_h), outline=gold, width=2)
+    # Table
+    y = 300
+    row_h = 55
+    for _ in range(6):
+        draw.rectangle((80, y, 920, y + row_h), outline=gold, width=2)
         y += row_h
 
-    draw.text((100, 270), f"Invoice ID: {invoice_id}", fill=white, font=text_font)
-    draw.text((650, 270), f"Date: {date}", fill=white, font=text_font)
-    draw.text((100, 315), f"Customer Name: {username}", fill=white, font=text_font)
+    # Content
+    draw.text((100, 310), f"Invoice ID: {invoice_id}", fill=white, font=text_font)
+    draw.text((650, 310), f"Date: {date}", fill=white, font=text_font)
 
-    draw.text((100, 360), "Premium Details", fill=gold, font=sub_font)
-    draw.text((100, 405), f"Premium Tier: {tier.capitalize()}", fill=white, font=text_font)
-    draw.text((100, 450), f"Duration: {days} Days", fill=white, font=text_font)
-    draw.text((100, 495), f"Coins Paid: {coins} PSG Coins", fill=white, font=text_font)
+    draw.text((100, 365), f"Customer: {username}", fill=white, font=text_font)
 
-    draw.text((100, 540), "Payment Status:", fill=white, font=text_font)
-    draw.text((320, 540), "PAID", fill=green, font=text_font)
+    draw.text((100, 420), "Premium Details", fill=gold, font=sub_font)
+    draw.text((100, 475), f"Tier: {tier.capitalize()}", fill=white, font=text_font)
+    draw.text((100, 525), f"Duration: {days} Days", fill=white, font=text_font)
+    draw.text((100, 575), f"Coins Paid: {coins}", fill=white, font=text_font)
 
-    draw.text((600, 540), "Authorized By: PSG FAMILY", fill=white, font=text_font)
-    draw.text((600, 580), "Signature: Kingofmyqueen", fill=gold, font=text_font)
-    draw.text((360, 620), "Thank you for your support!", fill=gold, font=sub_font)
+    draw.text((100, 630), "Payment Status:", fill=white, font=text_font)
+    draw.text((350, 630), "PAID", fill=green, font=text_font)
+
+    draw.text((600, 575), "Authorized By:", fill=white, font=small_font)
+    draw.text((600, 610), "PSG FAMILY", fill=white, font=text_font)
 
     buf = BytesIO()
     img.save(buf, "PNG")
