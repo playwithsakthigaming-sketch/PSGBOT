@@ -27,7 +27,7 @@ COGS = [
     "cogs.tickets",
     "cogs.economy",
     "cogs.levels",
-    "cogs.themes",
+    "cogs.status",
     "cogs.premium",
     "cogs.payment",
     "cogs.coin_shop",
