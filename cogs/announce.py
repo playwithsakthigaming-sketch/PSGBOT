@@ -20,6 +20,7 @@ class Announce(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         channel="Channel to send announcement",
+        title="Announcement title",
         message="Announcement text",
         role="Role to mention (optional)",
         use_embed="Send as embed? (true/false)",
@@ -29,6 +30,7 @@ class Announce(commands.Cog):
         self,
         interaction: discord.Interaction,
         channel: discord.TextChannel,
+        title: str,
         message: str,
         role: discord.Role | None = None,
         use_embed: bool = True,
@@ -38,7 +40,7 @@ class Announce(commands.Cog):
 
         # ---------------- PLAIN TEXT ----------------
         if not use_embed:
-            content = f"{mention}\n{message}" if mention else message
+            content = f"{mention}\n**{title}**\n{message}" if mention else f"**{title}**\n{message}"
             await channel.send(content)
             return await interaction.response.send_message(
                 "✅ Announcement sent (plain text).",
@@ -47,13 +49,17 @@ class Announce(commands.Cog):
 
         # ---------------- EMBED ----------------
         embed = discord.Embed(
-            title="📢 Announcement",
+            title=title,
             description=message,
             color=discord.Color.gold()
         )
+
+        # Get server icon
+        guild_icon = interaction.guild.icon.url if interaction.guild.icon else None
+
         embed.set_footer(
-            text=f"Announced by {interaction.user}",
-            icon_url=interaction.user.display_avatar.url
+            text="PSGFamily Administration",
+            icon_url=guild_icon
         )
 
         if image_url:
