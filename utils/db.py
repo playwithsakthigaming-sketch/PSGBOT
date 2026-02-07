@@ -137,7 +137,8 @@ async def init_db():
         await db.execute("""
         CREATE TABLE IF NOT EXISTS shop_categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE
+            name TEXT UNIQUE, 
+            channel_id INTEGER
         )
         """)
 
