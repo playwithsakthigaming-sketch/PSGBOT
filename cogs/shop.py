@@ -119,7 +119,9 @@ class PaymentConfirmView(discord.ui.View):
             row = await cur.fetchone()
 
             if not row or row[0] <= 0:
-                return await interaction.followup.send("❌ Item is out of stock.")
+                return await interaction.followup.send(
+                    "❌ Item is out of stock.", ephemeral=True
+                )
 
             link = row[1]
 
@@ -274,12 +276,7 @@ class Shop(commands.Cog):
     # ---------- ADD CATEGORY ----------
     @app_commands.command(name="add_category")
     @app_commands.checks.has_permissions(administrator=True)
-    async def add_category(
-        self,
-        interaction: discord.Interaction,
-        name: str,
-        channel: discord.TextChannel
-    ):
+    async def add_category(self, interaction: discord.Interaction, name: str, channel: discord.TextChannel):
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO shop_categories(name, channel_id) VALUES(?,?)",
@@ -295,16 +292,7 @@ class Shop(commands.Cog):
     # ---------- ADD PRODUCT ----------
     @app_commands.command(name="add_product")
     @app_commands.checks.has_permissions(administrator=True)
-    async def add_product(
-        self,
-        interaction: discord.Interaction,
-        name: str,
-        price: int,
-        stock: int,
-        image_url: str,
-        category: str,
-        product_link: str
-    ):
+    async def add_product(self, interaction: discord.Interaction, name: str, price: int, stock: int, image_url: str, category: str, product_link: str):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute(
                 "SELECT id FROM shop_categories WHERE name=?",
@@ -351,6 +339,8 @@ class Shop(commands.Cog):
     @app_commands.command(name="shop")
     async def shop(self, interaction: discord.Interaction):
 
+        await interaction.response.defer(ephemeral=True)
+
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("""
             SELECT shop_items.id, shop_items.name, shop_items.price,
@@ -362,7 +352,7 @@ class Shop(commands.Cog):
             items = await cur.fetchall()
 
         if not items:
-            return await interaction.response.send_message("🛒 Shop empty", ephemeral=True)
+            return await interaction.followup.send("🛒 Shop empty", ephemeral=True)
 
         sent_channels = set()
 
@@ -392,7 +382,7 @@ class Shop(commands.Cog):
 
             sent_channels.add(channel.mention)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"🛒 Shop loaded in: {', '.join(sent_channels)}",
             ephemeral=True
         )
