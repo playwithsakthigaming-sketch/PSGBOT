@@ -277,6 +277,8 @@ class Shop(commands.Cog):
     @app_commands.command(name="add_category")
     @app_commands.checks.has_permissions(administrator=True)
     async def add_category(self, interaction: discord.Interaction, name: str, channel: discord.TextChannel):
+        await interaction.response.defer(ephemeral=True)
+
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO shop_categories(name, channel_id) VALUES(?,?)",
@@ -284,7 +286,7 @@ class Shop(commands.Cog):
             )
             await db.commit()
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Category `{name}` linked to {channel.mention}.",
             ephemeral=True
         )
@@ -293,6 +295,8 @@ class Shop(commands.Cog):
     @app_commands.command(name="add_product")
     @app_commands.checks.has_permissions(administrator=True)
     async def add_product(self, interaction: discord.Interaction, name: str, price: int, stock: int, image_url: str, category: str, product_link: str):
+        await interaction.response.defer(ephemeral=True)
+
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute(
                 "SELECT id FROM shop_categories WHERE name=?",
@@ -301,7 +305,7 @@ class Shop(commands.Cog):
             row = await cur.fetchone()
 
             if not row:
-                return await interaction.response.send_message(
+                return await interaction.followup.send(
                     "❌ Category not found.",
                     ephemeral=True
                 )
@@ -314,7 +318,7 @@ class Shop(commands.Cog):
 
             await db.commit()
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Product `{name}` added.",
             ephemeral=True
         )
