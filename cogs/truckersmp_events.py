@@ -182,7 +182,7 @@ class TruckersMPEvents(commands.Cog):
     # -----------------------------------------------------
     # REMINDER LOOP
     # -----------------------------------------------------
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=720)
     async def reminder_loop(self):
         now = datetime.utcnow()
 
