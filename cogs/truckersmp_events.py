@@ -71,11 +71,18 @@ def build_route_embed(event, manual_route):
     if manual_route:
         route_img = manual_route
 
-    # 2. Official TruckersMP route map image only
+    # 2. Official route from route.image
     if not route_img and event.get("route"):
         route_img = event["route"].get("image")
 
+    # 3. Official route from route_image
+    if not route_img:
+        route_img = event.get("route_image")
+
     route_img = fix_imgur_url(route_img)
+
+    # Debug output
+    print("Route image:", route_img)
 
     if not route_img:
         return None
