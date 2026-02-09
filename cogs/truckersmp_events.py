@@ -37,7 +37,7 @@ async def fetch_event(event_id: int):
 
 
 async def fetch_route_image(event_url: str):
-    """Fetch route image from TruckersMP event page (reliable method)"""
+    """Fetch the correct route map image from the event page"""
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
 
@@ -47,21 +47,19 @@ async def fetch_route_image(event_url: str):
 
         soup = BeautifulSoup(html, "html.parser")
 
-        # Method 1: Official route image
-        img = soup.find("img", {"class": "img-fluid"})
+        # Look specifically inside route containers
+        cards = soup.find_all("div", class_="card-body")
+        for card in cards:
+            imgs = card.find_all("img")
+            for img in imgs:
+                src = img.get("src", "")
+                if src and ("route" in src.lower() or "map" in src.lower()):
+                    return urljoin(event_url, src)
+
+        # Fallback: look for route-related classes
+        img = soup.find("img", class_=re.compile("route|map", re.I))
         if img and img.get("src"):
             return urljoin(event_url, img["src"])
-
-        # Method 2: Any image containing "route"
-        for img in soup.find_all("img"):
-            src = img.get("src", "")
-            if "route" in src.lower():
-                return urljoin(event_url, src)
-
-        # Method 3: OpenGraph fallback
-        og = soup.find("meta", property="og:image")
-        if og and og.get("content"):
-            return og["content"]
 
     except Exception as e:
         print("Route image error:", e)
