@@ -1,12 +1,12 @@
 import discord
 import aiosqlite
 import aiohttp
-import calendar
 import re
 from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 DB_NAME = "bot.db"
 TRUCKERSMP_API = "https://api.truckersmp.com/v2/events/"
@@ -55,9 +55,13 @@ async def fetch_route_image(event_id: int):
                 html = await r.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                img = soup.find("img", {"class": "img-fluid"})
+                # Try multiple possible selectors
+                img = soup.select_one("img.img-fluid")
+                if not img:
+                    img = soup.select_one("img[src*='route']")
+
                 if img and img.get("src"):
-                    return img["src"]
+                    return urljoin(event_url, img["src"])
 
     except Exception as e:
         print("Route fetch error:", e)
@@ -89,12 +93,11 @@ def extract_image_from_markdown(text: str):
 
 
 # ================= EMBED BUILDERS =================
-async def build_event_embed(event):
+def build_event_embed(event):
     description = event.get("description", "No description")
     image_url, clean_description = extract_image_from_markdown(description)
 
     event_url = f"{TRUCKERSMP_EVENT_PAGE}{event['id']}"
-    route_image = await fetch_route_image(event["id"])
 
     embed = discord.Embed(
         title=event["name"],
@@ -107,13 +110,19 @@ async def build_event_embed(event):
     embed.add_field(name="📅 Date", value=start[:10])
     embed.add_field(name="🕒 Time", value=start[11:16])
 
-    # Priority: route image > description image
-    if route_image:
-        embed.set_image(url=route_image)
-    elif image_url:
+    if image_url:
         embed.set_image(url=image_url)
 
     embed.set_footer(text="TruckersMP Event System")
+    return embed
+
+
+def build_route_embed(route_image):
+    embed = discord.Embed(
+        title="🗺️ Event Route",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url=route_image)
     return embed
 
 
@@ -217,6 +226,8 @@ class TMPEvents(commands.Cog):
         if not event:
             return
 
+        route_image = await fetch_route_image(event_id)
+
         guild = self.bot.get_guild(guild_id)
         if not guild:
             return
@@ -227,12 +238,18 @@ class TMPEvents(commands.Cog):
         if not channel:
             return
 
+        # Main event embed
         await channel.send(
             content=role.mention if role else None,
-            embed=await build_event_embed(event),
+            embed=build_event_embed(event),
             view=EventButtonView(event_id)
         )
 
+        # Route embed (separate)
+        if route_image:
+            await channel.send(embed=build_route_embed(route_image))
+
+        # Slot embed
         await channel.send(embed=build_slot_embed(slot_number, slot_image))
 
     @tasks.loop(minutes=10)
