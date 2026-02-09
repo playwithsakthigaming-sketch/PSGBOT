@@ -42,10 +42,11 @@ def extract_image_from_markdown(text: str):
     if not text:
         return None, text
 
-    match = re.search(r'!\[\]\((.*?)\)', text)
+    # Support ![](url) and ![alt](url)
+    match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', text)
     if match:
         image_url = match.group(1)
-        clean_text = re.sub(r'!\[\]\(.*?\)', '', text).strip()
+        clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', text).strip()
         return image_url, clean_text
 
     return None, text
@@ -76,7 +77,11 @@ def build_event_embed(event, slot_number):
 
 
 def build_route_embed(event):
-    route_img = event.get("route", {}).get("image")
+    route = event.get("route")
+    if not route:
+        return None
+
+    route_img = route.get("image")
     if not route_img:
         return None
 
