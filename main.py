@@ -40,6 +40,7 @@ COGS = [
     "cogs.admin", 
     "cogs.auto_tts", 
     "cogs.truckersmp_events", 
+    "cogs.vtc_auto_events", 
     "cogs.shop", 
     "cogs.youtube"
 ]
