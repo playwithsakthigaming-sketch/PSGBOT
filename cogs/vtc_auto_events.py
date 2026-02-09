@@ -107,10 +107,6 @@ class VTCAutoEvents(commands.Cog):
                 for event in events:
                     event_id = event["id"]
 
-                    # Only attending events
-                    if not event.get("attending"):
-                        continue
-
                     if await self.is_posted(event_id):
                         continue
 
@@ -162,7 +158,7 @@ class VTCAutoEvents(commands.Cog):
                         inline=False
                     )
 
-                    # MAIN IMAGE (priority: route → banner → extracted)
+                    # MAIN IMAGE (route map first)
                     if route_map:
                         embed.set_image(url=route_map)
                     elif banner:
@@ -174,7 +170,7 @@ class VTCAutoEvents(commands.Cog):
                     if vtc_logo:
                         embed.set_thumbnail(url=vtc_logo)
 
-                    embed.set_footer(text="VTC Attending Event")
+                    embed.set_footer(text="VTC Auto Event Sync")
 
                     await channel.send(embed=embed)
                     await self.mark_posted(event_id)
