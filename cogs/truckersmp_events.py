@@ -2,13 +2,15 @@ import discord
 import aiosqlite
 import aiohttp
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from discord.ext import commands, tasks
 from discord import app_commands
 from bs4 import BeautifulSoup
 
 DB_NAME = "events.db"
 API_EVENT = "https://api.truckersmp.com/v2/events/{}"
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 # =========================================================
@@ -46,7 +48,6 @@ async def fetch_route_image(event_url: str) -> str | None:
                 html = await res.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # Look for route section
                 for header in soup.find_all(["h2", "h3", "h4"]):
                     if "route" in header.text.lower():
                         section = header.find_next("div")
@@ -123,8 +124,11 @@ class TruckersMPEvents(commands.Cog):
         server = data["server"]["name"]
         url = f"https://truckersmp.com/events/{event_id}"
 
-        dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        event_date = dt.strftime("%Y-%m-%d")
+        # Convert UTC → IST
+        dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        dt_ist = dt_utc.astimezone(IST)
+
+        event_date = dt_ist.strftime("%Y-%m-%d")
 
         # Fetch route image
         route_image = await fetch_route_image(url)
@@ -137,8 +141,8 @@ class TruckersMPEvents(commands.Cog):
             color=discord.Color.blue()
         )
         embed.add_field(name="Server", value=server, inline=True)
-        embed.add_field(name="Date", value=dt.strftime("%d %b %Y"), inline=True)
-        embed.add_field(name="Time (UTC)", value=dt.strftime("%H:%M"), inline=True)
+        embed.add_field(name="Date (IST)", value=dt_ist.strftime("%d %b %Y"), inline=True)
+        embed.add_field(name="Time (IST)", value=dt_ist.strftime("%H:%M"), inline=True)
 
         # ---------------- ROUTE EMBED ----------------
         route_embed = None
@@ -179,11 +183,11 @@ class TruckersMPEvents(commands.Cog):
         await interaction.followup.send("✅ Event posted and reminder scheduled.")
 
     # -----------------------------------------------------
-    # REMINDER LOOP
+    # REMINDER LOOP (IST 7 AM)
     # -----------------------------------------------------
     @tasks.loop(minutes=30)
     async def reminder_loop(self):
-        now = datetime.utcnow()
+        now_ist = datetime.now(IST)
 
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT * FROM events") as cursor:
@@ -192,7 +196,9 @@ class TruckersMPEvents(commands.Cog):
         for event_id, guild_id, role_id, event_date in rows:
             try:
                 event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
-                if now.date() == event_day and now.hour == 7:
+
+                # Send at 7:00 AM IST
+                if now_ist.date() == event_day and now_ist.hour == 7:
                     guild = self.bot.get_guild(guild_id)
                     if not guild:
                         continue
