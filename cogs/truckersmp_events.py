@@ -1,9 +1,9 @@
 import discord
 import aiosqlite
-import requests
+import aiohttp
 import calendar
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -30,12 +30,14 @@ async def init_event_table():
 
 
 # ================= API FETCH =================
-def fetch_event(event_id: int):
+async def fetch_event(event_id: int):
     url = TRUCKERSMP_API + str(event_id)
-    r = requests.get(url, timeout=15)
-    if r.status_code != 200:
-        return None
-    return r.json().get("response")
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, timeout=15) as r:
+            if r.status != 200:
+                return None
+            data = await r.json()
+            return data.get("response")
 
 
 # ================= IMAGE HELPERS =================
@@ -86,15 +88,22 @@ def build_event_embed(event):
     return embed
 
 
-# AUTO ROUTE IMAGE FROM TMP
 def build_route_embed(event):
     route_img = None
 
-    if event.get("route"):
+    # 1. Official TMP route image
+    if event.get("route") and isinstance(event["route"], dict):
         route_img = event["route"].get("image")
 
+    # 2. Backup field
     if not route_img:
         route_img = event.get("route_image")
+
+    # 3. Fallback from description
+    if not route_img:
+        desc = event.get("description", "")
+        img, _ = extract_image_from_markdown(desc)
+        route_img = img
 
     route_img = fix_imgur_url(route_img)
 
@@ -106,6 +115,7 @@ def build_route_embed(event):
         color=discord.Color.blue()
     )
     embed.set_image(url=route_img)
+    embed.set_footer(text="Route image from TruckersMP")
     return embed
 
 
@@ -209,7 +219,7 @@ class TMPEvents(commands.Cog):
         except:
             return await interaction.followup.send("❌ Invalid event URL")
 
-        event = fetch_event(event_id)
+        event = await fetch_event(event_id)
         if not event:
             return await interaction.followup.send("❌ Event not found")
 
@@ -249,7 +259,7 @@ class TMPEvents(commands.Cog):
             return await interaction.followup.send("❌ No event set.")
 
         event_id = row[0]
-        event = fetch_event(event_id)
+        event = await fetch_event(event_id)
         if not event:
             return await interaction.followup.send("❌ Event not found.")
 
@@ -279,12 +289,18 @@ class TMPEvents(commands.Cog):
             return
 
         event_id, channel_id, role_id, slot_number, slot_image = row
-        event = fetch_event(event_id)
+        event = await fetch_event(event_id)
         if not event:
             return
 
         guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+
         channel = guild.get_channel(channel_id)
+        if not channel:
+            return
+
         role = guild.get_role(role_id)
 
         await channel.send(
@@ -299,9 +315,15 @@ class TMPEvents(commands.Cog):
 
         await channel.send(embed=build_slot_embed(slot_number, slot_image))
 
+    # ---------------- REMINDER LOOP ----------------
     @tasks.loop(minutes=10)
     async def reminder_loop(self):
-        pass
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("SELECT guild_id FROM tmp_events")
+            rows = await cur.fetchall()
+
+        for (guild_id,) in rows:
+            await self.post_event(guild_id)
 
 
 # ================= SETUP =================
