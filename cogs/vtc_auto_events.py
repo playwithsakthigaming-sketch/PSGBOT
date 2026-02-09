@@ -1,6 +1,7 @@
 import discord
 import requests
 import aiosqlite
+import re
 from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime
@@ -52,7 +53,10 @@ class VTCAutoEvents(commands.Cog):
             await db.commit()
 
     # ================= COMMAND =================
-    @app_commands.command(name="setvtc", description="Set VTC ID and channel for auto event sync")
+    @app_commands.command(
+        name="setvtc",
+        description="Set VTC ID and channel for auto event sync"
+    )
     async def setvtc(
         self,
         interaction: discord.Interaction,
@@ -78,12 +82,17 @@ class VTCAutoEvents(commands.Cog):
         await self.init_db()
 
         async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT guild_id, vtc_id, channel_id FROM settings") as cursor:
+            async with db.execute(
+                "SELECT guild_id, vtc_id, channel_id FROM settings"
+            ) as cursor:
                 rows = await cursor.fetchall()
 
         for guild_id, vtc_id, channel_id in rows:
             try:
-                response = requests.get(API_VTC_EVENTS.format(vtc_id), timeout=10)
+                response = requests.get(
+                    API_VTC_EVENTS.format(vtc_id),
+                    timeout=10
+                )
                 data = response.json()
 
                 if not data.get("response"):
@@ -104,6 +113,7 @@ class VTCAutoEvents(commands.Cog):
                     name = event["name"]
                     description = event.get("description", "No description")
                     banner = event.get("banner")
+                    route_map = event.get("map")
                     start = event["start_at"]
                     url = event["url"]
 
@@ -114,7 +124,24 @@ class VTCAutoEvents(commands.Cog):
                     if banner and banner.startswith("/"):
                         banner = "https://truckersmp.com" + banner
 
-                    start_time = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    if route_map and route_map.startswith("/"):
+                        route_map = "https://truckersmp.com" + route_map
+
+                    # Extract image from description
+                    img_match = re.search(r'!\[\]\((.*?)\)', description)
+                    extracted_image = None
+
+                    if img_match:
+                        extracted_image = img_match.group(1)
+                        description = re.sub(
+                            r'!\[\]\(.*?\)',
+                            '',
+                            description
+                        ).strip()
+
+                    start_time = datetime.fromisoformat(
+                        start.replace("Z", "+00:00")
+                    )
 
                     embed = discord.Embed(
                         title=name,
@@ -129,14 +156,19 @@ class VTCAutoEvents(commands.Cog):
                         inline=False
                     )
 
+                    # Image priority
                     if banner:
                         embed.set_image(url=banner)
+                    elif extracted_image:
+                        embed.set_image(url=extracted_image)
+
+                    # Route map as thumbnail
+                    if route_map:
+                        embed.set_thumbnail(url=route_map)
 
                     embed.set_footer(text="VTC Auto Event Sync")
 
                     await channel.send(embed=embed)
-
-                    # Mark event as posted
                     await self.mark_posted(event_id)
 
             except Exception as e:
