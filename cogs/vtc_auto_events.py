@@ -78,7 +78,7 @@ class VTCAutoEvents(commands.Cog):
         )
 
     # ================= AUTO SYNC LOOP =================
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=10)
     async def sync_events(self):
         await self.init_db()
 
@@ -90,15 +90,18 @@ class VTCAutoEvents(commands.Cog):
 
         for guild_id, vtc_id, channel_id in rows:
             try:
-                # Get VTC logo
+                # Get VTC info
                 vtc_logo = None
                 vtc_res = requests.get(API_VTC_INFO.format(vtc_id), timeout=10)
                 vtc_data = vtc_res.json()
 
                 if vtc_data.get("response"):
-                    vtc_logo = vtc_data["response"].get("logo")
-                    if vtc_logo and vtc_logo.startswith("/"):
-                        vtc_logo = "https://truckersmp.com" + vtc_logo
+                    logo = vtc_data["response"].get("logo")
+                    if logo:
+                        if logo.startswith("/"):
+                            vtc_logo = "https://truckersmp.com" + logo
+                        else:
+                            vtc_logo = logo
 
                 # Get events
                 response = requests.get(
@@ -117,25 +120,30 @@ class VTCAutoEvents(commands.Cog):
                     continue
 
                 for event in events:
-                    event_id = event["id"]
+                    event_id = event.get("id")
+                    if not event_id:
+                        continue
 
                     if await self.is_posted(event_id):
                         continue
 
-                    start = event["start_at"]
+                    start = event.get("start_at")
+                    if not start:
+                        continue
+
                     start_time = datetime.fromisoformat(
                         start.replace("Z", "+00:00")
                     )
 
                     # Only upcoming events
-                    if start_time < datetime.now(timezone.utc):
+                    if start_time <= datetime.now(timezone.utc):
                         continue
 
-                    name = event["name"]
+                    name = event.get("name", "VTC Event")
                     description = event.get("description", "No description")
                     banner = event.get("banner")
                     route_map = event.get("map")
-                    url = event["url"]
+                    url = event.get("url", "")
 
                     # Fix URLs
                     if url.startswith("/"):
@@ -172,8 +180,7 @@ class VTCAutoEvents(commands.Cog):
                         inline=False
                     )
 
-                    # Main embed image priority:
-                    # Route map → banner → extracted image
+                    # Image priority
                     if route_map:
                         embed.set_image(url=route_map)
                     elif banner:
@@ -181,7 +188,7 @@ class VTCAutoEvents(commands.Cog):
                     elif extracted_image:
                         embed.set_image(url=extracted_image)
 
-                    # VTC logo as thumbnail
+                    # Thumbnail = VTC logo
                     if vtc_logo:
                         embed.set_thumbnail(url=vtc_logo)
 
@@ -191,7 +198,7 @@ class VTCAutoEvents(commands.Cog):
                     await self.mark_posted(event_id)
 
             except Exception as e:
-                print(f"Sync error for guild {guild_id}:", e)
+                print(f"[VTC Sync Error] Guild {guild_id}:", e)
 
     @sync_events.before_loop
     async def before_sync(self):
