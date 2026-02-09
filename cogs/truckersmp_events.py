@@ -11,7 +11,7 @@ class TruckersMPEvents(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # ================= HELPER =================
+    # ================= HELPERS =================
     def extract_event_id(self, value: str):
         """Extract event ID from URL or accept raw ID."""
         if "truckersmp.com" in value:
@@ -20,6 +20,17 @@ class TruckersMPEvents(commands.Cog):
                 if part.isdigit():
                     return part
         return value
+
+    def clean_image_url(self, url: str):
+        """Extract real image URL from markdown format."""
+        if not url:
+            return url
+
+        # Handle markdown format ![](url)
+        if url.startswith("![](") and url.endswith(")"):
+            return url[4:-1]
+
+        return url
 
     def extract_route_image(self, event_url: str):
         """Extract route image specifically from the route section."""
@@ -140,6 +151,7 @@ class TruckersMPEvents(commands.Cog):
                 )
 
                 if slot_image:
+                    slot_image = self.clean_image_url(slot_image)
                     slot_embed.set_image(url=slot_image)
 
             # ================= ROUTE EMBED =================
