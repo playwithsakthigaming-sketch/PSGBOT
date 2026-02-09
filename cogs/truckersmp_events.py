@@ -88,12 +88,24 @@ def build_event_embed(event):
     return embed
 
 
-# ONLY OFFICIAL ROUTE IMAGE
+# CORRECT ROUTE IMAGE DETECTION
 def build_route_embed(event):
     route_img = None
 
+    # 1. Official TMP route image
     if event.get("route") and isinstance(event["route"], dict):
         route_img = event["route"].get("image")
+
+    # 2. Backup TMP field
+    if not route_img:
+        route_img = event.get("route_image")
+
+    # 3. Extract route image from description (map screenshots)
+    if not route_img:
+        desc = event.get("description", "")
+        match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', desc)
+        if match:
+            route_img = match.group(1)
 
     route_img = fix_imgur_url(route_img)
 
@@ -101,11 +113,11 @@ def build_route_embed(event):
         return None
 
     embed = discord.Embed(
-        title="🗺 Official Event Route",
+        title="🗺 Event Route",
         color=discord.Color.blue()
     )
     embed.set_image(url=route_img)
-    embed.set_footer(text="Official route from TruckersMP")
+    embed.set_footer(text="Route from TruckersMP event data")
     return embed
 
 
