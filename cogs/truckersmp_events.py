@@ -108,20 +108,7 @@ class TruckersMPEvents(commands.Cog):
                 color=discord.Color.orange(),
                 url=url
             )
-
-            embed.add_field(name="🎮 Game", value=game, inline=True)
-            embed.add_field(name="🖥 Server", value=server, inline=True)
-            embed.add_field(name="🕒 Start Time", value=start, inline=False)
-
-            embed.add_field(name="📍 Departure", value=dep_city, inline=True)
-            embed.add_field(name="🏁 Destination", value=arr_city, inline=True)
-            embed.add_field(name="🛣 Distance", value=f"{distance} km", inline=True)
-
-            if channel:
-                embed.add_field(name="💬 Meeting Channel", value=channel.mention, inline=False)
-
-            if role:
-                embed.add_field(name="👥 Event Role", value=role.mention, inline=False)
+        
 
             embed.set_image(url=banner)
             embed.set_footer(text="TruckersMP Event System")
