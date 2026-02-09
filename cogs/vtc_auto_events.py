@@ -1,0 +1,153 @@
+import discord
+import requests
+import aiosqlite
+from discord.ext import commands, tasks
+from discord import app_commands
+from datetime import datetime
+
+DB_NAME = "vtc_events.db"
+API_VTC_EVENTS = "https://api.truckersmp.com/v2/vtc/{}/events"
+
+
+class VTCAutoEvents(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.sync_events.start()
+
+    def cog_unload(self):
+        self.sync_events.cancel()
+
+    # ================= DATABASE SETUP =================
+    async def init_db(self):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    guild_id INTEGER PRIMARY KEY,
+                    vtc_id INTEGER,
+                    channel_id INTEGER
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS posted_events (
+                    event_id INTEGER PRIMARY KEY
+                )
+            """)
+            await db.commit()
+
+    async def is_posted(self, event_id: int):
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute(
+                "SELECT event_id FROM posted_events WHERE event_id=?",
+                (event_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row is not None
+
+    async def mark_posted(self, event_id: int):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO posted_events(event_id) VALUES(?)",
+                (event_id,)
+            )
+            await db.commit()
+
+    # ================= COMMAND =================
+    @app_commands.command(name="setvtc", description="Set VTC ID and channel for auto event sync")
+    async def setvtc(
+        self,
+        interaction: discord.Interaction,
+        vtc_id: int,
+        channel: discord.TextChannel
+    ):
+        await self.init_db()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("""
+                INSERT OR REPLACE INTO settings(guild_id, vtc_id, channel_id)
+                VALUES(?, ?, ?)
+            """, (interaction.guild.id, vtc_id, channel.id))
+            await db.commit()
+
+        await interaction.response.send_message(
+            f"✅ Auto-sync enabled for VTC **{vtc_id}** in {channel.mention}"
+        )
+
+    # ================= AUTO SYNC LOOP =================
+    @tasks.loop(minutes=10)
+    async def sync_events(self):
+        await self.init_db()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT guild_id, vtc_id, channel_id FROM settings") as cursor:
+                rows = await cursor.fetchall()
+
+        for guild_id, vtc_id, channel_id in rows:
+            try:
+                response = requests.get(API_VTC_EVENTS.format(vtc_id), timeout=10)
+                data = response.json()
+
+                if not data.get("response"):
+                    continue
+
+                events = data["response"]
+                channel = self.bot.get_channel(channel_id)
+
+                if not channel:
+                    continue
+
+                for event in events:
+                    event_id = event["id"]
+
+                    if await self.is_posted(event_id):
+                        continue
+
+                    name = event["name"]
+                    description = event.get("description", "No description")
+                    banner = event.get("banner")
+                    start = event["start_at"]
+                    url = event["url"]
+
+                    # Fix URLs
+                    if url.startswith("/"):
+                        url = "https://truckersmp.com" + url
+
+                    if banner and banner.startswith("/"):
+                        banner = "https://truckersmp.com" + banner
+
+                    start_time = datetime.fromisoformat(start.replace("Z", "+00:00"))
+
+                    embed = discord.Embed(
+                        title=name,
+                        description=description,
+                        url=url,
+                        color=discord.Color.orange()
+                    )
+
+                    embed.add_field(
+                        name="Start Time",
+                        value=f"<t:{int(start_time.timestamp())}:F>",
+                        inline=False
+                    )
+
+                    if banner:
+                        embed.set_image(url=banner)
+
+                    embed.set_footer(text="VTC Auto Event Sync")
+
+                    await channel.send(embed=embed)
+
+                    # Mark event as posted
+                    await self.mark_posted(event_id)
+
+            except Exception as e:
+                print(f"Sync error for guild {guild_id}:", e)
+
+    @sync_events.before_loop
+    async def before_sync(self):
+        await self.bot.wait_until_ready()
+        await self.init_db()
+
+
+# ================= SETUP =================
+async def setup(bot: commands.Bot):
+    await bot.add_cog(VTCAutoEvents(bot))
