@@ -1,14 +1,13 @@
 import discord
 import aiosqlite
 import requests
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 
 DB_NAME = "bot.db"
-
 TRUCKERSMP_API = "https://api.truckersmp.com/v2/events/"
+
 
 # ================= DATABASE =================
 async def init_event_table():
@@ -36,7 +35,7 @@ def fetch_event(event_id: int):
     return r.json().get("response")
 
 
-# ================= EMBED BUILDER =================
+# ================= EMBED BUILDERS =================
 def build_event_embed(event, slot_number):
     embed = discord.Embed(
         title=event["name"],
@@ -82,7 +81,6 @@ def build_slot_embed(slot_image):
 class TMPEvents(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.auto_refresh.start()
         self.reminder_loop.start()
 
     async def cog_load(self):
@@ -127,7 +125,6 @@ class TMPEvents(commands.Cog):
             await db.commit()
 
         await interaction.followup.send("✅ Event saved")
-
         await self.post_event(interaction.guild.id)
 
     # ---------------- POST EVENT ----------------
@@ -161,25 +158,15 @@ class TMPEvents(commands.Cog):
         embed = build_event_embed(event, slot_number)
         await channel.send(content=role.mention if role else None, embed=embed)
 
-        # Route embed
+        # Route embed (separate)
         route_embed = build_route_embed(event)
         if route_embed:
             await channel.send(embed=route_embed)
 
-        # Slot embed
+        # Slot embed (separate)
         slot_embed = build_slot_embed(slot_image)
         if slot_embed:
             await channel.send(embed=slot_embed)
-
-    # ---------------- AUTO REFRESH ----------------
-    @tasks.loop(minutes=2)
-    async def auto_refresh(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("SELECT guild_id FROM tmp_events")
-            rows = await cur.fetchall()
-
-        for (guild_id,) in rows:
-            await self.post_event(guild_id)
 
     # ---------------- REMINDER LOOP ----------------
     @tasks.loop(minutes=10)
@@ -198,8 +185,12 @@ class TMPEvents(commands.Cog):
             if not event:
                 continue
 
-            event_time = datetime.fromisoformat(event["start_at"].replace("Z", ""))
-            reminder_time = event_time.replace(hour=7, minute=0, second=0)
+            event_time = datetime.fromisoformat(
+                event["start_at"].replace("Z", "")
+            )
+            reminder_time = event_time.replace(
+                hour=7, minute=0, second=0
+            )
 
             if now >= reminder_time:
                 if last_reminder and last_reminder > int(reminder_time.timestamp()):
@@ -229,7 +220,6 @@ class TMPEvents(commands.Cog):
                     """, (int(now.timestamp()), guild_id))
                     await db.commit()
 
-    @auto_refresh.before_loop
     @reminder_loop.before_loop
     async def before_loops(self):
         await self.bot.wait_until_ready()
