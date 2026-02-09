@@ -4,11 +4,10 @@ import aiosqlite
 import re
 from discord.ext import commands, tasks
 from discord import app_commands
-from datetime import datetime, timezone
+from datetime import datetime
 
 DB_NAME = "vtc_events.db"
 API_VTC_EVENTS = "https://api.truckersmp.com/v2/vtc/{}/events"
-API_VTC_INFO = "https://api.truckersmp.com/v2/vtc/{}"
 
 
 class VTCAutoEvents(commands.Cog):
@@ -78,7 +77,7 @@ class VTCAutoEvents(commands.Cog):
         )
 
     # ================= AUTO SYNC LOOP =================
-    @tasks.loop(minutes=1)
+    @tasks.loop(minutes=10)
     async def sync_events(self):
         await self.init_db()
 
@@ -90,20 +89,6 @@ class VTCAutoEvents(commands.Cog):
 
         for guild_id, vtc_id, channel_id in rows:
             try:
-                # Get VTC info
-                vtc_logo = None
-                vtc_res = requests.get(API_VTC_INFO.format(vtc_id), timeout=10)
-                vtc_data = vtc_res.json()
-
-                if vtc_data.get("response"):
-                    logo = vtc_data["response"].get("logo")
-                    if logo:
-                        if logo.startswith("/"):
-                            vtc_logo = "https://truckersmp.com" + logo
-                        else:
-                            vtc_logo = logo
-
-                # Get events
                 response = requests.get(
                     API_VTC_EVENTS.format(vtc_id),
                     timeout=10
@@ -120,40 +105,33 @@ class VTCAutoEvents(commands.Cog):
                     continue
 
                 for event in events:
-                    event_id = event.get("id")
-                    if not event_id:
+                    event_id = event["id"]
+
+                    # Only attending events
+                    if not event.get("attending"):
                         continue
 
                     if await self.is_posted(event_id):
                         continue
 
-                    start = event.get("start_at")
-                    if not start:
-                        continue
-
-                    start_time = datetime.fromisoformat(
-                        start.replace("Z", "+00:00")
-                    )
-
-                    # Only upcoming events
-                    if start_time <= datetime.now(timezone.utc):
-                        continue
-
-                    name = event.get("name", "VTC Event")
+                    name = event["name"]
                     description = event.get("description", "No description")
                     banner = event.get("banner")
                     route_map = event.get("map")
-                    url = event.get("url", "")
+                    start = event["start_at"]
+                    url = event["url"]
+                    vtc_logo = event.get("vtc", {}).get("logo")
 
                     # Fix URLs
-                    if url.startswith("/"):
-                        url = "https://truckersmp.com" + url
+                    def fix_url(u):
+                        if u and u.startswith("/"):
+                            return "https://truckersmp.com" + u
+                        return u
 
-                    if banner and banner.startswith("/"):
-                        banner = "https://truckersmp.com" + banner
-
-                    if route_map and route_map.startswith("/"):
-                        route_map = "https://truckersmp.com" + route_map
+                    url = fix_url(url)
+                    banner = fix_url(banner)
+                    route_map = fix_url(route_map)
+                    vtc_logo = fix_url(vtc_logo)
 
                     # Extract image from description
                     img_match = re.search(r'!\[\]\((.*?)\)', description)
@@ -166,6 +144,10 @@ class VTCAutoEvents(commands.Cog):
                             '',
                             description
                         ).strip()
+
+                    start_time = datetime.fromisoformat(
+                        start.replace("Z", "+00:00")
+                    )
 
                     embed = discord.Embed(
                         title=name,
@@ -180,7 +162,7 @@ class VTCAutoEvents(commands.Cog):
                         inline=False
                     )
 
-                    # Image priority
+                    # MAIN IMAGE (priority: route → banner → extracted)
                     if route_map:
                         embed.set_image(url=route_map)
                     elif banner:
@@ -188,17 +170,17 @@ class VTCAutoEvents(commands.Cog):
                     elif extracted_image:
                         embed.set_image(url=extracted_image)
 
-                    # Thumbnail = VTC logo
+                    # VTC logo as thumbnail
                     if vtc_logo:
                         embed.set_thumbnail(url=vtc_logo)
 
-                    embed.set_footer(text="VTC Upcoming Event")
+                    embed.set_footer(text="VTC Attending Event")
 
                     await channel.send(embed=embed)
                     await self.mark_posted(event_id)
 
             except Exception as e:
-                print(f"[VTC Sync Error] Guild {guild_id}:", e)
+                print(f"Sync error for guild {guild_id}:", e)
 
     @sync_events.before_loop
     async def before_sync(self):
