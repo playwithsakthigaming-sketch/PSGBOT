@@ -1,8 +1,10 @@
 import discord
 import aiosqlite
 import aiohttp
+import requests
 import calendar
 import re
+from bs4 import BeautifulSoup
 from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -38,6 +40,23 @@ async def fetch_event(event_id: int):
                 return None
             data = await r.json()
             return data.get("response")
+
+
+# ================= SCRAPE ROUTE IMAGE =================
+def fetch_route_image(event_url: str):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(event_url, headers=headers, timeout=15)
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        img = soup.find("img", {"class": "img-fluid"})
+        if img and img.get("src"):
+            return img["src"]
+
+    except Exception as e:
+        print("Route fetch error:", e)
+
+    return None
 
 
 # ================= IMAGE HELPERS =================
@@ -88,19 +107,24 @@ def build_event_embed(event):
     return embed
 
 
-# CORRECT ROUTE IMAGE DETECTION
+# ================= ROUTE IMAGE LOGIC =================
 def build_route_embed(event):
     route_img = None
 
-    # 1. Official TMP route image
+    # 1. Official API route image
     if event.get("route") and isinstance(event["route"], dict):
         route_img = event["route"].get("image")
 
-    # 2. Backup TMP field
+    # 2. Backup API field
     if not route_img:
         route_img = event.get("route_image")
 
-    # 3. Extract route image from description (map screenshots)
+    # 3. Scrape from event webpage
+    if not route_img:
+        event_url = f"{TRUCKERSMP_EVENT_PAGE}{event['id']}"
+        route_img = fetch_route_image(event_url)
+
+    # 4. Fallback from description
     if not route_img:
         desc = event.get("description", "")
         match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', desc)
@@ -117,7 +141,7 @@ def build_route_embed(event):
         color=discord.Color.blue()
     )
     embed.set_image(url=route_img)
-    embed.set_footer(text="Route from TruckersMP event data")
+    embed.set_footer(text="Route from TruckersMP")
     return embed
 
 
@@ -203,7 +227,6 @@ class TMPEvents(commands.Cog):
     async def cog_load(self):
         await init_event_table()
 
-    # ---------------- /EVENT ----------------
     @app_commands.command(name="event", description="Setup TruckersMP event")
     async def event(
         self,
@@ -244,40 +267,6 @@ class TMPEvents(commands.Cog):
         await interaction.followup.send("✅ Event saved")
         await self.post_event(interaction.guild.id)
 
-    # ---------------- /CALENDAR ----------------
-    @app_commands.command(name="calendar", description="Show event calendar")
-    async def calendar(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("""
-            SELECT event_id
-            FROM tmp_events
-            WHERE guild_id=?
-            """, (interaction.guild.id,))
-            row = await cur.fetchone()
-
-        if not row:
-            return await interaction.followup.send("❌ No event set.")
-
-        event_id = row[0]
-        event = await fetch_event(event_id)
-        if not event:
-            return await interaction.followup.send("❌ Event not found.")
-
-        event_time = datetime.fromisoformat(
-            event["start_at"].replace("Z", "")
-        )
-
-        embed = build_month_view(
-            event,
-            event_time.year,
-            event_time.month
-        )
-
-        await interaction.followup.send(embed=embed)
-
-    # ---------------- POST EVENT ----------------
     async def post_event(self, guild_id):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("""
@@ -317,7 +306,6 @@ class TMPEvents(commands.Cog):
 
         await channel.send(embed=build_slot_embed(slot_number, slot_image))
 
-    # ---------------- REMINDER LOOP ----------------
     @tasks.loop(minutes=10)
     async def reminder_loop(self):
         async with aiosqlite.connect(DB_NAME) as db:
