@@ -2,7 +2,6 @@ import discord
 import aiosqlite
 import aiohttp
 import re
-from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 from bs4 import BeautifulSoup
@@ -55,11 +54,21 @@ async def fetch_route_image(event_id: int):
                 html = await r.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # Try multiple possible selectors
-                img = soup.select_one("img.img-fluid")
-                if not img:
-                    img = soup.select_one("img[src*='route']")
+                # Look for "Event Route" section
+                route_section = soup.find(
+                    lambda tag: tag.name in ["h2", "h3", "h4"]
+                    and "route" in tag.text.lower()
+                )
 
+                if route_section:
+                    parent = route_section.find_parent()
+                    if parent:
+                        img = parent.find("img")
+                        if img and img.get("src"):
+                            return urljoin(event_url, img["src"])
+
+                # Fallback: any image that contains "route"
+                img = soup.select_one("img[src*='route']")
                 if img and img.get("src"):
                     return urljoin(event_url, img["src"])
 
@@ -245,7 +254,7 @@ class TMPEvents(commands.Cog):
             view=EventButtonView(event_id)
         )
 
-        # Route embed (separate)
+        # Route embed
         if route_image:
             await channel.send(embed=build_route_embed(route_image))
 
