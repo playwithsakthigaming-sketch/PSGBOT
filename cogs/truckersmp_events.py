@@ -23,6 +23,7 @@ async def init_event_table():
             role_id INTEGER,
             slot_number TEXT,
             slot_image TEXT,
+            route_image TEXT,
             last_reminder INTEGER DEFAULT 0
         )
         """)
@@ -40,6 +41,8 @@ def fetch_event(event_id: int):
 
 # ================= IMAGE HELPERS =================
 def fix_imgur_url(url: str):
+    if not url:
+        return None
     if "imgur.com" in url and "i.imgur.com" not in url:
         code = url.split("/")[-1]
         return f"https://i.imgur.com/{code}"
@@ -84,17 +87,17 @@ def build_event_embed(event):
     return embed
 
 
-def build_route_embed(event):
-    route_img = None
+def build_route_embed(event, manual_route):
+    route_img = fix_imgur_url(manual_route)
 
-    if event.get("route"):
-        route_img = event["route"].get("image")
+    if not route_img:
+        if event.get("route"):
+            route_img = event["route"].get("image")
 
     if not route_img:
         route_img = event.get("route_image")
 
-    if route_img:
-        route_img = fix_imgur_url(route_img)
+    route_img = fix_imgur_url(route_img)
 
     if not route_img:
         return None
@@ -125,7 +128,7 @@ def build_slot_embed(slot_number, slot_image):
     return embed
 
 
-# ================= BIGGER CALENDAR =================
+# ================= CALENDAR =================
 def build_month_view(event, year, month):
     event_time = datetime.fromisoformat(
         event["start_at"].replace("Z", "")
@@ -198,7 +201,8 @@ class TMPEvents(commands.Cog):
         channel: discord.TextChannel,
         role: discord.Role,
         slot_number: str,
-        slot_image: str = None
+        slot_image: str = None,
+        route_image: str = None
     ):
         await interaction.response.defer()
 
@@ -214,26 +218,62 @@ class TMPEvents(commands.Cog):
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("""
             INSERT OR REPLACE INTO tmp_events
-            (guild_id, event_id, channel_id, role_id, slot_number, slot_image)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (guild_id, event_id, channel_id, role_id,
+             slot_number, slot_image, route_image)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 interaction.guild.id,
                 event_id,
                 channel.id,
                 role.id,
                 slot_number,
-                slot_image
+                slot_image,
+                route_image
             ))
             await db.commit()
 
         await interaction.followup.send("✅ Event saved")
         await self.post_event(interaction.guild.id)
 
+    # ---------------- /CALENDAR ----------------
+    @app_commands.command(name="calendar", description="Show event calendar")
+    async def calendar(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+            SELECT event_id
+            FROM tmp_events
+            WHERE guild_id=?
+            """, (interaction.guild.id,))
+            row = await cur.fetchone()
+
+        if not row:
+            return await interaction.followup.send("❌ No event set.")
+
+        event_id = row[0]
+        event = fetch_event(event_id)
+        if not event:
+            return await interaction.followup.send("❌ Event not found.")
+
+        event_time = datetime.fromisoformat(
+            event["start_at"].replace("Z", "")
+        )
+
+        embed = build_month_view(
+            event,
+            event_time.year,
+            event_time.month
+        )
+
+        await interaction.followup.send(embed=embed)
+
     # ---------------- POST EVENT ----------------
     async def post_event(self, guild_id):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("""
-            SELECT event_id, channel_id, role_id, slot_number, slot_image
+            SELECT event_id, channel_id, role_id,
+                   slot_number, slot_image, route_image
             FROM tmp_events WHERE guild_id=?
             """, (guild_id,))
             row = await cur.fetchone()
@@ -241,7 +281,7 @@ class TMPEvents(commands.Cog):
         if not row:
             return
 
-        event_id, channel_id, role_id, slot_number, slot_image = row
+        event_id, channel_id, role_id, slot_number, slot_image, route_image = row
         event = fetch_event(event_id)
         if not event:
             return
@@ -250,14 +290,13 @@ class TMPEvents(commands.Cog):
         channel = guild.get_channel(channel_id)
         role = guild.get_role(role_id)
 
-        # Main embed with button
         await channel.send(
             content=role.mention if role else None,
             embed=build_event_embed(event),
             view=EventButtonView(event_id)
         )
 
-        route_embed = build_route_embed(event)
+        route_embed = build_route_embed(event, route_image)
         if route_embed:
             await channel.send(embed=route_embed)
 
