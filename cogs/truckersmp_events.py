@@ -131,14 +131,10 @@ class TruckersMPEvents(commands.Cog):
         banner = data.get("banner")
         url = f"https://truckersmp.com/events/{event_id}"
 
-        # VTC logo
-        vtc_logo = None
-        if data.get("vtc") and data["vtc"].get("logo"):
-            vtc_logo = data["vtc"]["logo"]
-
         # Convert UTC → IST
         dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST)
+
         event_date = dt_ist.strftime("%Y-%m-%d")
 
         # Fetch route image
@@ -157,9 +153,6 @@ class TruckersMPEvents(commands.Cog):
 
         if banner:
             embed.set_image(url=banner)
-
-        if vtc_logo:
-            embed.set_thumbnail(url=vtc_logo)
 
         # ---------------- ROUTE EMBED ----------------
         route_embed = None
@@ -293,7 +286,7 @@ class TruckersMPEvents(commands.Cog):
                 continue
 
     # -----------------------------------------------------
-    # AUTO DELETE PAST EVENTS
+    # AUTO DELETE PAST EVENTS (every 6 hours)
     # -----------------------------------------------------
     @tasks.loop(hours=6)
     async def cleanup_loop(self):
