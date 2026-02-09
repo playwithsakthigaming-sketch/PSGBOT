@@ -2,15 +2,13 @@ import discord
 import aiosqlite
 import aiohttp
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 from bs4 import BeautifulSoup
 
 DB_NAME = "events.db"
 API_EVENT = "https://api.truckersmp.com/v2/events/{}"
-
-IST = timezone(timedelta(hours=5, minutes=30))
 
 
 # =========================================================
@@ -48,6 +46,7 @@ async def fetch_route_image(event_url: str) -> str | None:
                 html = await res.text()
                 soup = BeautifulSoup(html, "html.parser")
 
+                # Look for route section
                 for header in soup.find_all(["h2", "h3", "h4"]):
                     if "route" in header.text.lower():
                         section = header.find_next("div")
@@ -71,14 +70,10 @@ async def fetch_route_image(event_url: str) -> str | None:
 class TruckersMPEvents(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.calendar_message_id = None
-        self.calendar_channel_id = None
         self.reminder_loop.start()
-        self.calendar_loop.start()
 
     def cog_unload(self):
         self.reminder_loop.cancel()
-        self.calendar_loop.cancel()
 
     async def init_db(self):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -126,14 +121,10 @@ class TruckersMPEvents(commands.Cog):
         description = data["description"][:1000]
         start_time = data["start_at"]
         server = data["server"]["name"]
-        banner = data.get("banner")
         url = f"https://truckersmp.com/events/{event_id}"
 
-        # Convert UTC → IST
-        dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        dt_ist = dt_utc.astimezone(IST)
-
-        event_date = dt_ist.strftime("%Y-%m-%d")
+        dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        event_date = dt.strftime("%Y-%m-%d")
 
         # Fetch route image
         route_image = await fetch_route_image(url)
@@ -146,11 +137,8 @@ class TruckersMPEvents(commands.Cog):
             color=discord.Color.blue()
         )
         embed.add_field(name="Server", value=server, inline=True)
-        embed.add_field(name="Date (IST)", value=dt_ist.strftime("%d %b %Y"), inline=True)
-        embed.add_field(name="Time (IST)", value=dt_ist.strftime("%H:%M"), inline=True)
-
-        if banner:
-            embed.set_image(url=banner)
+        embed.add_field(name="Date", value=dt.strftime("%d %b %Y"), inline=True)
+        embed.add_field(name="Time (UTC)", value=dt.strftime("%H:%M"), inline=True)
 
         # ---------------- ROUTE EMBED ----------------
         route_embed = None
@@ -180,7 +168,7 @@ class TruckersMPEvents(commands.Cog):
 
         await channel.send(embed=slot_embed)
 
-        # Save event for reminder + calendar
+        # Save event for reminder
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT INTO events VALUES (?, ?, ?, ?)",
@@ -191,69 +179,11 @@ class TruckersMPEvents(commands.Cog):
         await interaction.followup.send("✅ Event posted and reminder scheduled.")
 
     # -----------------------------------------------------
-    # /calendar
-    # -----------------------------------------------------
-    @app_commands.command(name="calendar", description="Create event calendar")
-    async def calendar(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        await interaction.response.defer()
-
-        embed = await self.build_calendar_embed()
-        msg = await channel.send(embed=embed)
-
-        self.calendar_channel_id = channel.id
-        self.calendar_message_id = msg.id
-
-        await interaction.followup.send("📅 Calendar created and auto-refresh enabled.")
-
-    async def build_calendar_embed(self):
-        embed = discord.Embed(
-            title="📅 Event Calendar",
-            color=discord.Color.orange()
-        )
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT event_id, event_date FROM events ORDER BY event_date") as cursor:
-                rows = await cursor.fetchall()
-
-        if not rows:
-            embed.description = "No upcoming events."
-            return embed
-
-        lines = []
-        for event_id, event_date in rows:
-            dt = datetime.strptime(event_date, "%Y-%m-%d")
-            formatted = dt.strftime("%d %b %Y")
-            url = f"https://truckersmp.com/events/{event_id}"
-            lines.append(f"**{formatted}** → [Event Link]({url})")
-
-        embed.description = "\n".join(lines)
-        return embed
-
-    # -----------------------------------------------------
-    # CALENDAR AUTO REFRESH
-    # -----------------------------------------------------
-    @tasks.loop(minutes=2)
-    async def calendar_loop(self):
-        if not self.calendar_channel_id or not self.calendar_message_id:
-            return
-
-        channel = self.bot.get_channel(self.calendar_channel_id)
-        if not channel:
-            return
-
-        try:
-            msg = await channel.fetch_message(self.calendar_message_id)
-            embed = await self.build_calendar_embed()
-            await msg.edit(embed=embed)
-        except:
-            pass
-
-    # -----------------------------------------------------
-    # REMINDER LOOP (IST 7 AM)
+    # REMINDER LOOP
     # -----------------------------------------------------
     @tasks.loop(minutes=30)
     async def reminder_loop(self):
-        now_ist = datetime.now(IST)
+        now = datetime.utcnow()
 
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT * FROM events") as cursor:
@@ -262,8 +192,7 @@ class TruckersMPEvents(commands.Cog):
         for event_id, guild_id, role_id, event_date in rows:
             try:
                 event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
-
-                if now_ist.date() == event_day and now_ist.hour == 7:
+                if now.date() == event_day and now.hour == 7:
                     guild = self.bot.get_guild(guild_id)
                     if not guild:
                         continue
