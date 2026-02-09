@@ -131,12 +131,13 @@ class TruckersMPEvents(commands.Cog):
         # Convert UTC → IST
         dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST)
+
         event_date = dt_ist.strftime("%Y-%m-%d")
 
         # Fetch route image
         route_image = await fetch_route_image(url)
 
-        # Main embed
+        # ---------------- MAIN EVENT EMBED ----------------
         embed = discord.Embed(
             title=title,
             url=url,
@@ -147,7 +148,7 @@ class TruckersMPEvents(commands.Cog):
         embed.add_field(name="Date (IST)", value=dt_ist.strftime("%d %b %Y"), inline=True)
         embed.add_field(name="Time (IST)", value=dt_ist.strftime("%H:%M"), inline=True)
 
-        # Route embed
+        # ---------------- ROUTE EMBED ----------------
         route_embed = None
         if route_image:
             route_embed = discord.Embed(
@@ -156,7 +157,7 @@ class TruckersMPEvents(commands.Cog):
             )
             route_embed.set_image(url=route_image)
 
-        # Slot embed
+        # ---------------- SLOT EMBED ----------------
         slot_embed = discord.Embed(
             title="🚚 Slot Information",
             color=discord.Color.green()
@@ -166,7 +167,7 @@ class TruckersMPEvents(commands.Cog):
         if slot_image:
             slot_embed.set_image(url=slot_image)
 
-        # Send
+        # Send messages
         await channel.send(role.mention)
         await channel.send(embed=embed)
 
@@ -175,7 +176,7 @@ class TruckersMPEvents(commands.Cog):
 
         await channel.send(embed=slot_embed)
 
-        # Save event
+        # Save event for reminder + calendar
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT INTO events VALUES (?, ?, ?, ?)",
@@ -193,6 +194,7 @@ class TruckersMPEvents(commands.Cog):
         await interaction.response.defer()
 
         embed = await self.build_calendar_embed()
+
         msg = await channel.send(embed=embed)
 
         self.calendar_channel_id = channel.id
@@ -207,9 +209,7 @@ class TruckersMPEvents(commands.Cog):
         )
 
         async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute(
-                "SELECT event_id, event_date FROM events ORDER BY event_date"
-            ) as cursor:
+            async with db.execute("SELECT event_id, event_date FROM events ORDER BY event_date") as cursor:
                 rows = await cursor.fetchall()
 
         if not rows:
@@ -227,20 +227,7 @@ class TruckersMPEvents(commands.Cog):
         return embed
 
     # -----------------------------------------------------
-    # CLEANUP PAST EVENTS
-    # -----------------------------------------------------
-    async def cleanup_past_events(self):
-        now_ist = datetime.now(IST).date()
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM events WHERE event_date < ?",
-                (now_ist.strftime("%Y-%m-%d"),)
-            )
-            await db.commit()
-
-    # -----------------------------------------------------
-    # CALENDAR AUTO REFRESH
+    # CALENDAR AUTO REFRESH (2 minutes)
     # -----------------------------------------------------
     @tasks.loop(minutes=2)
     async def calendar_loop(self):
@@ -259,14 +246,11 @@ class TruckersMPEvents(commands.Cog):
             pass
 
     # -----------------------------------------------------
-    # REMINDER LOOP
+    # REMINDER LOOP (IST 7 AM)
     # -----------------------------------------------------
     @tasks.loop(minutes=720)
     async def reminder_loop(self):
         now_ist = datetime.now(IST)
-
-        # Remove past events
-        await self.cleanup_past_events()
 
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT * FROM events") as cursor:
