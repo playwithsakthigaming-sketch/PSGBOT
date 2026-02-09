@@ -13,6 +13,7 @@ class TruckersMPEvents(commands.Cog):
 
     # ================= HELPER =================
     def extract_event_id(self, value: str):
+        """Extract event ID from URL or accept raw ID."""
         if "truckersmp.com" in value:
             parts = value.split("/")
             for part in parts:
@@ -33,7 +34,6 @@ class TruckersMPEvents(commands.Cog):
                 if not src:
                     continue
 
-                # look for route-like images
                 if any(word in src.lower() for word in ["route", "map", "convoy"]):
                     if src.startswith("/"):
                         return "https://truckersmp.com" + src
@@ -44,7 +44,7 @@ class TruckersMPEvents(commands.Cog):
         return None
 
     # ================= COMMAND =================
-    @app_commands.command(name="event", description="Show TruckersMP event details")
+    @app_commands.command(name="event", description="Show TruckersMP event full details")
     async def event(
         self,
         interaction: discord.Interaction,
@@ -75,10 +75,18 @@ class TruckersMPEvents(commands.Cog):
             description = event_data["description"]
             url = event_data["url"]
 
+            departure = event_data.get("departure", {})
+            arrival = event_data.get("arrival", {})
+
+            dep_city = departure.get("city", "Unknown")
+            arr_city = arrival.get("city", "Unknown")
+
+            distance = event_data.get("distance", "Unknown")
+
             # ================= MAIN EVENT EMBED =================
             embed = discord.Embed(
                 title=name,
-                description=description[:300] + "...",
+                description=description,
                 color=discord.Color.orange(),
                 url=url
             )
@@ -87,11 +95,15 @@ class TruckersMPEvents(commands.Cog):
             embed.add_field(name="🖥 Server", value=server, inline=True)
             embed.add_field(name="🕒 Start Time", value=start, inline=False)
 
+            embed.add_field(name="📍 Departure", value=dep_city, inline=True)
+            embed.add_field(name="🏁 Destination", value=arr_city, inline=True)
+            embed.add_field(name="🛣 Distance", value=f"{distance} km", inline=True)
+
             if channel:
-                embed.add_field(name="📍 Meeting Channel", value=channel.mention)
+                embed.add_field(name="💬 Meeting Channel", value=channel.mention, inline=False)
 
             if role:
-                embed.add_field(name="👥 Event Role", value=role.mention)
+                embed.add_field(name="👥 Event Role", value=role.mention, inline=False)
 
             embed.set_image(url=banner)
             embed.set_footer(text="TruckersMP Event System")
