@@ -73,7 +73,7 @@ class VTCAutoEvents(commands.Cog):
         )
 
     # ================= AUTO SYNC LOOP =================
-    @tasks.loop(minutes=10)
+    @tasks.loop(minutes=1)
     async def sync_events(self):
         await self.init_db()
 
