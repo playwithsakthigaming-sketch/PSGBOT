@@ -32,9 +32,13 @@ class EventSystem(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.reminder_loop.start()
+        self.update_loop.start()
+        self.countdown_loop.start()
 
     def cog_unload(self):
         self.reminder_loop.cancel()
+        self.update_loop.cancel()
+        self.countdown_loop.cancel()
 
     # -----------------------------------------------------
     # DB INIT
@@ -52,6 +56,7 @@ class EventSystem(commands.Cog):
                     route_image TEXT,
                     start_time INTEGER,
                     reminded INTEGER DEFAULT 0,
+                    message_id INTEGER,
                     created_by INTEGER
                 )
             """)
@@ -62,7 +67,7 @@ class EventSystem(commands.Cog):
         await self.init_db()
 
     # -----------------------------------------------------
-    # AUTO REMINDER LOOP
+    # REMINDER LOOP
     # -----------------------------------------------------
     @tasks.loop(minutes=1)
     async def reminder_loop(self):
@@ -85,23 +90,151 @@ class EventSystem(commands.Cog):
                         role = guild.get_role(role_id)
                         channel = guild.get_channel(channel_id)
 
-                        if not role or not channel:
-                            continue
-
-                        try:
+                        if role and channel:
                             await channel.send(
                                 f"🚛 {role.mention} **Convoy starting in 1 hour!**\n"
                                 f"https://truckersmp.com/events/{event_id}"
                             )
-                        except:
-                            pass
 
                     await db.execute(
                         "UPDATE events SET reminded = 1 WHERE event_id=?",
                         (event_id,)
                     )
-
             await db.commit()
+
+    # -----------------------------------------------------
+    # AUTO UPDATE LOOP
+    # -----------------------------------------------------
+    @tasks.loop(minutes=10)
+    async def update_loop(self):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+                SELECT event_id, channel_id, message_id, role_id, slot_number
+                FROM events
+            """)
+            rows = await cur.fetchall()
+
+        for event_id, channel_id, message_id, role_id, slot_number in rows:
+            data = await self.fetch_event(event_id)
+            if not data:
+                continue
+
+            name = data.get("name", "Unknown")
+            start_str = data.get("start_at")
+            server = data.get("server", {}).get("name", "Unknown")
+
+            departure = data.get("departure") or {}
+            destination = data.get("arrival") or {}
+
+            dep_text = f"{departure.get('city','Unknown')} ({departure.get('location','Unknown')})"
+
+            dest_text = None
+            if destination.get("city") or destination.get("location"):
+                dest_text = f"{destination.get('city','Unknown')} ({destination.get('location','Unknown')})"
+
+            banner = data.get("banner")
+            event_link = f"https://truckersmp.com/events/{event_id}"
+
+            for guild in self.bot.guilds:
+                channel = guild.get_channel(channel_id)
+                role = guild.get_role(role_id)
+
+                if not channel or not role:
+                    continue
+
+                try:
+                    msg = await channel.fetch_message(message_id)
+                except:
+                    continue
+
+                embed = discord.Embed(
+                    title=f"🚛 {name}",
+                    url=event_link,
+                    color=discord.Color.orange(),
+                    description=role.mention
+                )
+
+                embed.add_field(name="📅 Date", value=start_str, inline=True)
+                embed.add_field(name="🖥 Server", value=server, inline=True)
+                embed.add_field(name="🅿 Slot", value=str(slot_number), inline=True)
+                embed.add_field(name="📍 Departure", value=dep_text, inline=False)
+
+                if dest_text:
+                    embed.add_field(name="🏁 Destination", value=dest_text, inline=False)
+
+                if banner:
+                    embed.set_image(url=banner)
+
+                await msg.edit(embed=embed)
+
+    # -----------------------------------------------------
+    # COUNTDOWN LOOP
+    # -----------------------------------------------------
+    @tasks.loop(minutes=1)
+    async def countdown_loop(self):
+        now = int(time.time())
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+                SELECT event_id, channel_id, message_id, role_id, slot_number, start_time
+                FROM events
+            """)
+            rows = await cur.fetchall()
+
+        for event_id, channel_id, message_id, role_id, slot_number, start_time in rows:
+            if not start_time or start_time < now:
+                continue
+
+            remaining = start_time - now
+            days = remaining // 86400
+            hours = (remaining % 86400) // 3600
+            minutes = (remaining % 3600) // 60
+            countdown_text = f"{days}d {hours}h {minutes}m"
+
+            data = await self.fetch_event(event_id)
+            if not data:
+                continue
+
+            name = data.get("name", "Unknown")
+            server = data.get("server", {}).get("name", "Unknown")
+            start_str = data.get("start_at")
+
+            departure = data.get("departure") or {}
+            dep_text = f"{departure.get('city','Unknown')} ({departure.get('location','Unknown')})"
+
+            banner = data.get("banner")
+            event_link = f"https://truckersmp.com/events/{event_id}"
+
+            for guild in self.bot.guilds:
+                channel = guild.get_channel(channel_id)
+                role = guild.get_role(role_id)
+
+                if not channel or not role:
+                    continue
+
+                try:
+                    msg = await channel.fetch_message(message_id)
+                except:
+                    continue
+
+                embed = discord.Embed(
+                    title=f"🚛 {name}",
+                    url=event_link,
+                    color=discord.Color.orange(),
+                    description=f"{role.mention}\n⏳ **Starts in:** {countdown_text}"
+                )
+
+                embed.add_field(name="📅 Date", value=start_str, inline=True)
+                embed.add_field(name="🖥 Server", value=server, inline=True)
+                embed.add_field(name="🅿 Slot", value=str(slot_number), inline=True)
+                embed.add_field(name="📍 Departure", value=dep_text, inline=False)
+
+                if banner:
+                    embed.set_image(url=banner)
+
+                embed.set_footer(text="Live countdown")
+
+                await msg.edit(embed=embed)
 
     # -----------------------------------------------------
     # HELPERS
@@ -112,167 +245,12 @@ class EventSystem(commands.Cog):
 
     async def fetch_event(self, event_id: str):
         url = f"https://api.truckersmp.com/v2/events/{event_id}"
-
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
                 return data.get("response")
-
-    # -----------------------------------------------------
-    # /event COMMAND
-    # -----------------------------------------------------
-    @app_commands.command(
-        name="event",
-        description="📅 Create TruckersMP event with reminder"
-    )
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def create_event(
-        self,
-        interaction: discord.Interaction,
-        eventurl: str,
-        role: discord.Role,
-        channel: discord.TextChannel,
-        slotnumber: int,
-        slotimage: str,
-        routeimage: str
-    ):
-        await interaction.response.defer()
-
-        event_id = self.extract_event_id(eventurl)
-        data = await self.fetch_event(event_id)
-
-        if not data:
-            return await interaction.followup.send(
-                "❌ Could not fetch event details.",
-                ephemeral=True
-            )
-
-        # Extract details
-        name = data.get("name", "Unknown")
-        start_str = data.get("start_at")
-        server = data.get("server", {}).get("name", "Unknown")
-
-        dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-        start_timestamp = int(dt.timestamp())
-
-        departure = data.get("departure") or {}
-        destination = data.get("arrival") or {}
-
-        dep_text = f"{departure.get('city', 'Unknown')} ({departure.get('location', 'Unknown')})"
-        dest_text = f"{destination.get('city', 'Unknown')} ({destination.get('location', 'Unknown')})"
-
-        banner = data.get("banner")
-        event_link = f"https://truckersmp.com/events/{event_id}"
-
-        # Save to DB
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-                INSERT INTO events (
-                    event_id, role_id, channel_id,
-                    slot_number, slot_image, route_image,
-                    start_time, reminded, created_by
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-            """, (
-                event_id,
-                role.id,
-                channel.id,
-                slotnumber,
-                slotimage,
-                routeimage,
-                start_timestamp,
-                interaction.user.id
-            ))
-            await db.commit()
-
-        # ---------------- MAIN EVENT EMBED ----------------
-        main_embed = discord.Embed(
-            title=f"🚛 {name}",
-            url=event_link,
-            color=discord.Color.orange(),
-            description=role.mention
-        )
-
-        main_embed.add_field(name="📅 Date", value=start_str, inline=True)
-        main_embed.add_field(name="🖥 Server", value=server, inline=True)
-        main_embed.add_field(name="🅿 Slot", value=str(slotnumber), inline=True)
-        main_embed.add_field(name="📍 Departure", value=dep_text, inline=False)
-        main_embed.add_field(name="🏁 Destination", value=dest_text, inline=False)
-
-        if banner:
-            main_embed.set_image(url=banner)
-
-        main_embed.set_footer(text=f"Created by {interaction.user}")
-
-        # ---------------- ROUTE EMBED ----------------
-        route_embed = discord.Embed(
-            title="🗺️ Event Route",
-            color=discord.Color.blue()
-        )
-        route_embed.set_image(url=routeimage)
-
-        # ---------------- SLOT EMBED ----------------
-        slot_embed = discord.Embed(
-            title="🅿 Slot Information",
-            color=discord.Color.green()
-        )
-        slot_embed.set_image(url=slotimage)
-
-        view = JoinEventView(event_link)
-
-        await interaction.followup.send(
-            embeds=[main_embed, route_embed, slot_embed],
-            view=view
-        )
-
-    # -----------------------------------------------------
-    # /event_calendar COMMAND
-    # -----------------------------------------------------
-    @app_commands.command(
-        name="event_calendar",
-        description="📅 View upcoming convoy events"
-    )
-    async def event_calendar(self, interaction: discord.Interaction):
-        now = int(time.time())
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("""
-                SELECT event_id, slot_number, start_time
-                FROM events
-                WHERE start_time > ?
-                ORDER BY start_time ASC
-                LIMIT 10
-            """, (now,))
-            rows = await cur.fetchall()
-
-        if not rows:
-            return await interaction.response.send_message(
-                "❌ No upcoming events.",
-                ephemeral=True
-            )
-
-        embed = discord.Embed(
-            title="📅 Upcoming Convoy Calendar",
-            color=discord.Color.orange()
-        )
-
-        for event_id, slot, start_time in rows:
-            date = f"<t:{start_time}:F>"
-            link = f"https://truckersmp.com/events/{event_id}"
-
-            embed.add_field(
-                name=f"🚛 Event {event_id}",
-                value=(
-                    f"📅 {date}\n"
-                    f"🅿 Slot: {slot}\n"
-                    f"[View Event]({link})"
-                ),
-                inline=False
-            )
-
-        await interaction.response.send_message(embed=embed)
 
 # ---------------------------------------------------------
 # SETUP
