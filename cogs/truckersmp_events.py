@@ -131,14 +131,10 @@ class TruckersMPEvents(commands.Cog):
         banner = data.get("banner")
         url = f"https://truckersmp.com/events/{event_id}"
 
-        # Get VTC logo
-        vtc_logo = None
-        if data.get("vtc") and data["vtc"].get("logo"):
-            vtc_logo = data["vtc"]["logo"]
-
         # Convert UTC → IST
         dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST)
+
         event_date = dt_ist.strftime("%Y-%m-%d")
 
         # Fetch route image
@@ -157,9 +153,6 @@ class TruckersMPEvents(commands.Cog):
 
         if banner:
             embed.set_image(url=banner)
-
-        if vtc_logo:
-            embed.set_thumbnail(url=vtc_logo)
 
         # ---------------- ROUTE EMBED ----------------
         route_embed = None
@@ -199,4 +192,133 @@ class TruckersMPEvents(commands.Cog):
 
         await interaction.followup.send("✅ Event posted and reminder scheduled.")
 
-    # (rest of code unchanged — calendar, reminder, cleanup, setup)
+    # -----------------------------------------------------
+    # /calendar
+    # -----------------------------------------------------
+    @app_commands.command(name="calendar", description="Create event calendar")
+    async def calendar(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer()
+
+        embed = await self.build_calendar_embed()
+        msg = await channel.send(embed=embed)
+
+        self.calendar_channel_id = channel.id
+        self.calendar_message_id = msg.id
+
+        await interaction.followup.send("📅 Calendar created and auto-refresh enabled.")
+
+    async def build_calendar_embed(self):
+        embed = discord.Embed(
+            title="📅 Event Calendar",
+            color=discord.Color.orange()
+        )
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT event_id, event_date FROM events ORDER BY event_date") as cursor:
+                rows = await cursor.fetchall()
+
+        if not rows:
+            embed.description = "No upcoming events."
+            return embed
+
+        lines = []
+        for event_id, event_date in rows:
+            dt = datetime.strptime(event_date, "%Y-%m-%d")
+            formatted = dt.strftime("%d %b %Y")
+            url = f"https://truckersmp.com/events/{event_id}"
+            lines.append(f"**{formatted}** → [Event Link]({url})")
+
+        embed.description = "\n".join(lines)
+        return embed
+
+    # -----------------------------------------------------
+    # CALENDAR AUTO REFRESH
+    # -----------------------------------------------------
+    @tasks.loop(minutes=2)
+    async def calendar_loop(self):
+        if not self.calendar_channel_id or not self.calendar_message_id:
+            return
+
+        channel = self.bot.get_channel(self.calendar_channel_id)
+        if not channel:
+            return
+
+        try:
+            msg = await channel.fetch_message(self.calendar_message_id)
+            embed = await self.build_calendar_embed()
+            await msg.edit(embed=embed)
+        except:
+            pass
+
+    # -----------------------------------------------------
+    # REMINDER LOOP (IST 7 AM)
+    # -----------------------------------------------------
+    @tasks.loop(minutes=30)
+    async def reminder_loop(self):
+        now_ist = datetime.now(IST)
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT * FROM events") as cursor:
+                rows = await cursor.fetchall()
+
+        for event_id, guild_id, role_id, event_date in rows:
+            try:
+                event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
+
+                if now_ist.date() == event_day and now_ist.hour == 7:
+                    guild = self.bot.get_guild(guild_id)
+                    if not guild:
+                        continue
+
+                    role = guild.get_role(role_id)
+                    if not role:
+                        continue
+
+                    for member in role.members:
+                        try:
+                            await member.send(
+                                f"⏰ Reminder: Event today!\n"
+                                f"https://truckersmp.com/events/{event_id}"
+                            )
+                        except:
+                            pass
+            except:
+                continue
+
+    # -----------------------------------------------------
+    # AUTO DELETE PAST EVENTS (every 6 hours)
+    # -----------------------------------------------------
+    @tasks.loop(hours=6)
+    async def cleanup_loop(self):
+        today = datetime.now(IST).date()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT event_id, event_date FROM events") as cursor:
+                rows = await cursor.fetchall()
+
+            for event_id, event_date in rows:
+                try:
+                    event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
+                    if event_day < today:
+                        await db.execute(
+                            "DELETE FROM events WHERE event_id = ?",
+                            (event_id,)
+                        )
+                except:
+                    continue
+
+            await db.commit()
+
+    @reminder_loop.before_loop
+    @cleanup_loop.before_loop
+    async def before_loops(self):
+        await self.bot.wait_until_ready()
+        await self.init_db()
+
+
+# =========================================================
+# SETUP
+# =========================================================
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(TruckersMPEvents(bot))
