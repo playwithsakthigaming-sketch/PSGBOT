@@ -75,6 +75,13 @@ class TruckersMPEvents(commands.Cog):
             description = event_data["description"]
             url = event_data["url"]
 
+            # ===== FIX RELATIVE URL =====
+            if url and url.startswith("/"):
+                url = "https://truckersmp.com" + url
+
+            if banner and banner.startswith("/"):
+                banner = "https://truckersmp.com" + banner
+
             departure = event_data.get("departure", {})
             arrival = event_data.get("arrival", {})
 
