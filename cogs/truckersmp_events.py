@@ -22,26 +22,37 @@ class TruckersMPEvents(commands.Cog):
         return value
 
     def extract_route_image(self, event_url: str):
-        """Scrape event page and find route image."""
+        """Extract route image specifically from the route section."""
         try:
             page = requests.get(event_url, timeout=10)
             soup = BeautifulSoup(page.text, "html.parser")
 
-            images = soup.find_all("img")
+            # Find the route section
+            route_section = None
+            for header in soup.find_all(["h2", "h3", "h4"]):
+                if "route" in header.text.lower():
+                    route_section = header.find_next("div")
+                    break
 
-            for img in images:
-                src = img.get("src")
-                if not src:
-                    continue
+            if not route_section:
+                return None
 
-                if any(word in src.lower() for word in ["route", "map", "convoy"]):
-                    if src.startswith("/"):
-                        return "https://truckersmp.com" + src
-                    return src
+            # Find image inside route section
+            img = route_section.find("img")
+            if not img:
+                return None
+
+            src = img.get("src")
+            if not src:
+                return None
+
+            if src.startswith("/"):
+                return "https://truckersmp.com" + src
+
+            return src
+
         except:
-            pass
-
-        return None
+            return None
 
     # ================= COMMAND =================
     @app_commands.command(name="event", description="Show TruckersMP event full details")
