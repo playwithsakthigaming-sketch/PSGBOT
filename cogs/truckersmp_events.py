@@ -23,7 +23,6 @@ async def init_event_table():
             role_id INTEGER,
             slot_number TEXT,
             slot_image TEXT,
-            route_image TEXT,
             last_reminder INTEGER DEFAULT 0
         )
         """)
@@ -87,12 +86,12 @@ def build_event_embed(event):
     return embed
 
 
-def build_route_embed(event, manual_route):
-    route_img = fix_imgur_url(manual_route)
+# AUTO ROUTE IMAGE FROM TMP
+def build_route_embed(event):
+    route_img = None
 
-    if not route_img:
-        if event.get("route"):
-            route_img = event["route"].get("image")
+    if event.get("route"):
+        route_img = event["route"].get("image")
 
     if not route_img:
         route_img = event.get("route_image")
@@ -103,7 +102,7 @@ def build_route_embed(event, manual_route):
         return None
 
     embed = discord.Embed(
-        title="🗺 Route Map",
+        title="🗺 Event Route",
         color=discord.Color.blue()
     )
     embed.set_image(url=route_img)
@@ -201,8 +200,7 @@ class TMPEvents(commands.Cog):
         channel: discord.TextChannel,
         role: discord.Role,
         slot_number: str,
-        slot_image: str = None,
-        route_image: str = None
+        slot_image: str = None
     ):
         await interaction.response.defer()
 
@@ -219,16 +217,15 @@ class TMPEvents(commands.Cog):
             await db.execute("""
             INSERT OR REPLACE INTO tmp_events
             (guild_id, event_id, channel_id, role_id,
-             slot_number, slot_image, route_image)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+             slot_number, slot_image)
+            VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 interaction.guild.id,
                 event_id,
                 channel.id,
                 role.id,
                 slot_number,
-                slot_image,
-                route_image
+                slot_image
             ))
             await db.commit()
 
@@ -273,7 +270,7 @@ class TMPEvents(commands.Cog):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("""
             SELECT event_id, channel_id, role_id,
-                   slot_number, slot_image, route_image
+                   slot_number, slot_image
             FROM tmp_events WHERE guild_id=?
             """, (guild_id,))
             row = await cur.fetchone()
@@ -281,7 +278,7 @@ class TMPEvents(commands.Cog):
         if not row:
             return
 
-        event_id, channel_id, role_id, slot_number, slot_image, route_image = row
+        event_id, channel_id, role_id, slot_number, slot_image = row
         event = fetch_event(event_id)
         if not event:
             return
@@ -296,7 +293,7 @@ class TMPEvents(commands.Cog):
             view=EventButtonView(event_id)
         )
 
-        route_embed = build_route_embed(event, route_image)
+        route_embed = build_route_embed(event)
         if route_embed:
             await channel.send(embed=route_embed)
 
