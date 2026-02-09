@@ -34,18 +34,29 @@ async def fetch_event(event_id: int):
             return data.get("response")
 
 
-async def fetch_route_image(event_url: str):
-    """Fetch route image from TMP event page"""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(event_url, headers=headers) as res:
-                html = await res.text()
+     # Find the route section
+            route_section = None
+            for header in soup.find_all(["h2", "h3", "h4"]):
+                if "route" in header.text.lower():
+                    route_section = header.find_next("div")
+                    break
 
-        # More reliable route image detection
-        match = re.search(r'<img[^>]+src="([^"]+route[^"]+)"', html, re.IGNORECASE)
-        if match:
-            return match.group(1)
+            if not route_section:
+                return None
+
+            # Find image inside route section
+            img = route_section.find("img")
+            if not img:
+                return None
+
+            src = img.get("src")
+            if not src:
+                return None
+
+            if src.startswith("/"):
+                return "https://truckersmp.com" + src
+
+            return src
 
     except:
         pass
@@ -130,13 +141,15 @@ class TruckersMPEvents(commands.Cog):
         embed.add_field(name="Time (UTC)", value=dt.strftime("%H:%M"), inline=True)
 
         # ---------------- ROUTE EMBED ----------------
-        route_embed = None
-        if route_image:
-            route_embed = discord.Embed(
-                title="🗺️ Event Route",
-                color=discord.Color.purple()
-            )
-            route_embed.set_image(url=route_image)
+          route_embed = None
+            route_image = self.extract_route_image(url)
+
+            if route_image:
+                route_embed = discord.Embed(
+                    title="🗺 Event Route",
+                    color=discord.Color.green()
+                )
+                route_embed.set_image(url=route_image)
 
         # ---------------- SLOT EMBED ----------------
         slot_embed = discord.Embed(
