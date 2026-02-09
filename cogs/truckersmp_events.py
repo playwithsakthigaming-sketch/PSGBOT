@@ -2,6 +2,7 @@ import discord
 import aiosqlite
 import requests
 import calendar
+import re
 from datetime import datetime, timezone
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -36,11 +37,29 @@ def fetch_event(event_id: int):
     return r.json().get("response")
 
 
+# ================= IMAGE EXTRACT =================
+def extract_image_from_markdown(text: str):
+    if not text:
+        return None, text
+
+    match = re.search(r'!\[\]\((.*?)\)', text)
+    if match:
+        image_url = match.group(1)
+        clean_text = re.sub(r'!\[\]\(.*?\)', '', text).strip()
+        return image_url, clean_text
+
+    return None, text
+
+
 # ================= EMBED BUILDERS =================
 def build_event_embed(event, slot_number):
+    description = event.get("description", "No description")
+
+    image_url, clean_description = extract_image_from_markdown(description)
+
     embed = discord.Embed(
         title=event["name"],
-        description=event.get("description", "No description"),
+        description=clean_description or "No description",
         color=discord.Color.orange()
     )
 
@@ -48,6 +67,9 @@ def build_event_embed(event, slot_number):
     embed.add_field(name="📅 Date", value=start[:10])
     embed.add_field(name="🕒 Time", value=start[11:16])
     embed.add_field(name="🎯 Slot", value=slot_number or "N/A")
+
+    if image_url:
+        embed.set_image(url=image_url)
 
     embed.set_footer(text="TruckersMP Event System")
     return embed
@@ -130,17 +152,14 @@ class CalendarView(discord.ui.View):
     def update_buttons(self):
         self.clear_items()
 
-        # Previous month
         self.add_item(CalendarNavButton("◀", -1))
 
-        # Event day button
         event_time = datetime.fromisoformat(
             self.event["start_at"].replace("Z", "")
         )
         if event_time.year == self.year and event_time.month == self.month:
             self.add_item(EventDayButton(event_time.day))
 
-        # Next month
         self.add_item(CalendarNavButton("▶", 1))
 
 
