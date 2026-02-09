@@ -69,7 +69,8 @@ async def fetch_route_image(event_url: str):
 
         return src
 
-    except:
+    except Exception as e:
+        print("Route image error:", e)
         return None
 
 
@@ -117,75 +118,78 @@ class TruckersMPEvents(commands.Cog):
         slot_number: int,
         slot_image: str | None = None
     ):
-        await interaction.response.defer()
+        await interaction.response.defer(thinking=True)
 
-        event_id = extract_event_id(event)
-        if not event_id:
-            return await interaction.followup.send("❌ Invalid event link or ID.")
+        try:
+            event_id = extract_event_id(event)
+            if not event_id:
+                return await interaction.followup.send("❌ Invalid event link or ID.")
 
-        data = await fetch_event(event_id)
-        if not data:
-            return await interaction.followup.send("❌ Event not found.")
+            data = await fetch_event(event_id)
+            if not data:
+                return await interaction.followup.send("❌ Event not found.")
 
-        title = data["name"]
-        description = data["description"][:1000]
-        start_time = data["start_at"]
-        server = data["server"]["name"]
-        url = f"https://truckersmp.com/events/{event_id}"
+            title = data["name"]
+            description = data["description"][:1000]
+            start_time = data["start_at"]
+            server = data["server"]["name"]
+            url = f"https://truckersmp.com/events/{event_id}"
 
-        dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-        event_date = dt.strftime("%Y-%m-%d")
+            dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            event_date = dt.strftime("%Y-%m-%d")
 
-        route_image = await fetch_route_image(url)
+            route_image = await fetch_route_image(url)
 
-        # ---------------- MAIN EVENT EMBED ----------------
-        embed = discord.Embed(
-            title=title,
-            url=url,
-            description=description,
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="Server", value=server, inline=True)
-        embed.add_field(name="Date", value=dt.strftime("%d %b %Y"), inline=True)
-        embed.add_field(name="Time (UTC)", value=dt.strftime("%H:%M"), inline=True)
+            # ---------------- MAIN EVENT EMBED ----------------
+            embed = discord.Embed(
+                title=title,
+                url=url,
+                description=description,
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="Server", value=server, inline=True)
+            embed.add_field(name="Date", value=dt.strftime("%d %b %Y"), inline=True)
+            embed.add_field(name="Time (UTC)", value=dt.strftime("%H:%M"), inline=True)
 
-        # ---------------- ROUTE EMBED ----------------
-        route_embed = None
-        if route_image:
-            route_embed = discord.Embed(
-                title="🗺 Event Route",
+            # ---------------- ROUTE EMBED ---------------
+                route_embed = discord.Embed(
+                    title="🗺 Event Route",
+                    color=discord.Color.green()
+                )
+                route_embed.set_image(url=route_image)
+
+            # ---------------- SLOT EMBED ----------------
+            slot_embed = discord.Embed(
+                title="🚚 Slot Information",
                 color=discord.Color.green()
             )
-            route_embed.set_image(url=route_image)
+            slot_embed.add_field(name="Slot Number", value=str(slot_number))
 
-        # ---------------- SLOT EMBED ----------------
-        slot_embed = discord.Embed(
-            title="🚚 Slot Information",
-            color=discord.Color.green()
-        )
-        slot_embed.add_field(name="Slot Number", value=str(slot_number))
+            if slot_image:
+                slot_embed.set_image(url=slot_image)
 
-        if slot_image:
-            slot_embed.set_image(url=slot_image)
+            # Send messages
+            await channel.send(role.mention)
+            await channel.send(embed=embed)
 
-        # Send messages
-        await channel.send(role.mention)
-        await channel.send(embed=embed)
+            if route_embed:
+                await channel.send(embed=route_embed)
 
-        if route_embed:
-            await channel.send(embed=route_embed)
+            await channel.send(embed=slot_embed)
 
-        await channel.send(embed=slot_embed)
+            # Save event for reminder
+            async with aiosqlite.connect(DB_NAME) as db:
+                await db.execute(
+                    "INSERT INTO events VALUES (?, ?, ?, ?)",
+                    (event_id, interaction.guild.id, role.id, event_date)
+                )
+                await db.commit()
 
-        # Save event for reminder
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT INTO events VALUES (?, ?, ?, ?)",
-                (event_id, interaction.guild.id, role.id, event_date)
-            )
-            await db.commit()
+            await interaction.followup.send("✅ Event posted and reminder scheduled.")
 
-        await interaction.followup.send("✅ Event posted and reminder scheduled.")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}")
+            print("Event command error:", e)
 
     # -----------------------------------------------------
     # REMINDER LOOP
