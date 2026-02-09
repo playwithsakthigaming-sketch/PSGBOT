@@ -54,7 +54,6 @@ async def fetch_route_image(event_id: int):
                 html = await r.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # Look for "Event Route" section
                 route_section = soup.find(
                     lambda tag: tag.name in ["h2", "h3", "h4"]
                     and "route" in tag.text.lower()
@@ -67,7 +66,6 @@ async def fetch_route_image(event_id: int):
                         if img and img.get("src"):
                             return urljoin(event_url, img["src"])
 
-                # Fallback: any image that contains "route"
                 img = soup.select_one("img[src*='route']")
                 if img and img.get("src"):
                     return urljoin(event_url, img["src"])
@@ -78,49 +76,47 @@ async def fetch_route_image(event_id: int):
     return None
 
 
-# ================= IMAGE HELPERS =================
-def fix_imgur_url(url: str):
-    if not url:
-        return None
-    if "imgur.com" in url and "i.imgur.com" not in url:
-        code = url.split("/")[-1]
-        return f"https://i.imgur.com/{code}"
-    return url
-
-
-def extract_image_from_markdown(text: str):
+# ================= DESCRIPTION CLEANER =================
+def extract_convoy_info(text: str):
     if not text:
-        return None, text
+        return "No details available."
 
-    match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', text)
-    if match:
-        image_url = fix_imgur_url(match.group(1))
-        clean_text = re.sub(r'!\[.*?\]\(.*?\)', '', text).strip()
-        return image_url, clean_text
+    # Remove markdown images
+    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
 
-    return None, text
+    lines = text.splitlines()
+    convoy_lines = []
+
+    for line in lines:
+        line = line.strip()
+
+        if re.match(r'^[•\-]\s*(Date|Server|Meetup|Departure|Route|Distance|Destination|Breaks|DLC|Event|Link)', line, re.IGNORECASE):
+            clean = re.sub(r'^[•\-]\s*', '', line)
+            convoy_lines.append(clean)
+
+    if convoy_lines:
+        return "\n".join(convoy_lines)
+
+    return "No convoy details found."
 
 
 # ================= EMBED BUILDERS =================
 def build_event_embed(event):
-    description = event.get("description", "No description")
-    image_url, clean_description = extract_image_from_markdown(description)
+    raw_description = event.get("description", "No description")
+    clean_description = extract_convoy_info(raw_description)
 
     event_url = f"{TRUCKERSMP_EVENT_PAGE}{event['id']}"
 
     embed = discord.Embed(
         title=event["name"],
         url=event_url,
-        description=clean_description or "No description",
+        description=clean_description,
         color=discord.Color.orange()
     )
 
     start = event["start_at"]
     embed.add_field(name="📅 Date", value=start[:10])
     embed.add_field(name="🕒 Time", value=start[11:16])
-
-    if image_url:
-        embed.set_image(url=image_url)
 
     embed.set_footer(text="TruckersMP Event System")
     return embed
@@ -148,7 +144,7 @@ def build_slot_embed(slot_number, slot_image):
     )
 
     if slot_image:
-        embed.set_image(url=fix_imgur_url(slot_image))
+        embed.set_image(url=slot_image)
 
     return embed
 
