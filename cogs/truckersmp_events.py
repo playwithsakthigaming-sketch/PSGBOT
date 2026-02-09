@@ -75,10 +75,12 @@ class TruckersMPEvents(commands.Cog):
         self.calendar_channel_id = None
         self.reminder_loop.start()
         self.calendar_loop.start()
+        self.cleanup_loop.start()
 
     def cog_unload(self):
         self.reminder_loop.cancel()
         self.calendar_loop.cancel()
+        self.cleanup_loop.cancel()
 
     async def init_db(self):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -283,8 +285,33 @@ class TruckersMPEvents(commands.Cog):
             except:
                 continue
 
+    # -----------------------------------------------------
+    # AUTO DELETE PAST EVENTS (every 6 hours)
+    # -----------------------------------------------------
+    @tasks.loop(hours=6)
+    async def cleanup_loop(self):
+        today = datetime.now(IST).date()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT event_id, event_date FROM events") as cursor:
+                rows = await cursor.fetchall()
+
+            for event_id, event_date in rows:
+                try:
+                    event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
+                    if event_day < today:
+                        await db.execute(
+                            "DELETE FROM events WHERE event_id = ?",
+                            (event_id,)
+                        )
+                except:
+                    continue
+
+            await db.commit()
+
     @reminder_loop.before_loop
-    async def before_loop(self):
+    @cleanup_loop.before_loop
+    async def before_loops(self):
         await self.bot.wait_until_ready()
         await self.init_db()
 
