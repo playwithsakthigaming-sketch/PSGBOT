@@ -8,7 +8,8 @@ import re
 from datetime import datetime
 
 DB_NAME = "bot.db"
-REMINDER_BEFORE = 3600  # 1 hour
+REMINDER_BEFORE = 3600  # 1 hour before event
+
 
 # -----------------------------------------------------
 # JOIN BUTTON
@@ -24,6 +25,7 @@ class JoinEventView(discord.ui.View):
                 emoji="🚛"
             )
         )
+
 
 # -----------------------------------------------------
 # EVENT COG
@@ -250,9 +252,9 @@ class EventSystem(commands.Cog):
                 return data.get("response")
 
     # -----------------------------------------------------
-    # /event
+    # /event (FULL DETAILS)
     # -----------------------------------------------------
-    @app_commands.command(name="event", description="Create convoy event")
+    @app_commands.command(name="event", description="Create convoy event with full TruckersMP details")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def event(
         self,
@@ -276,43 +278,54 @@ class EventSystem(commands.Cog):
         start_str = data.get("start_at")
         server = data.get("server", {}).get("name", "Unknown")
         banner = data.get("banner")
-        api_route = data.get("map")
-
-        final_route = routeimage if routeimage else api_route
 
         dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
         start_timestamp = int(dt.timestamp())
 
+        departure = data.get("departure") or {}
+        destination = data.get("arrival") or {}
+
+        dep_text = f"{departure.get('city','Unknown')} ({departure.get('location','Unknown')})"
+
+        dest_text = None
+        if destination.get("city") or destination.get("location"):
+            dest_text = f"{destination.get('city','Unknown')} ({destination.get('location','Unknown')})"
+
+        api_route = data.get("map")
+        final_route = routeimage if routeimage else api_route
+
         event_link = f"https://truckersmp.com/events/{event_id}"
 
-        # Main embed
         main_embed = discord.Embed(
             title=f"🚛 {name}",
             url=event_link,
             color=discord.Color.orange(),
             description=role.mention
         )
-        main_embed.add_field(name="📅 Date", value=start_str, inline=True)
+
+        main_embed.add_field(name="📅 Date", value=f"<t:{start_timestamp}:F>", inline=True)
         main_embed.add_field(name="🖥 Server", value=server, inline=True)
         main_embed.add_field(name="🅿 Slot", value=str(slotnumber), inline=True)
+        main_embed.add_field(name="📍 Departure", value=dep_text, inline=False)
+
+        if dest_text:
+            main_embed.add_field(name="🏁 Destination", value=dest_text, inline=False)
 
         if banner:
             main_embed.set_image(url=banner)
 
-        # Route embed
         embeds = [main_embed]
+
         if final_route:
             route_embed = discord.Embed(title="🗺️ Event Route", color=discord.Color.blue())
             route_embed.set_image(url=final_route)
             embeds.append(route_embed)
 
-        # Slot embed
-        slot_embed = discord.Embed(title="🅿 Slot", color=discord.Color.green())
+        slot_embed = discord.Embed(title="🅿 Slot Information", color=discord.Color.green())
         slot_embed.set_image(url=slotimage)
         embeds.append(slot_embed)
 
         view = JoinEventView(event_link)
-
         msg = await interaction.followup.send(embeds=embeds, view=view)
 
         async with aiosqlite.connect(DB_NAME) as db:
@@ -398,6 +411,7 @@ class EventSystem(commands.Cog):
             )
 
         await interaction.followup.send("✅ Test reminder sent.")
+
 
 # ---------------------------------------------------------
 # SETUP
