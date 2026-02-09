@@ -2,8 +2,7 @@ import discord
 import aiosqlite
 import aiohttp
 import re
-import calendar
-from datetime import datetime, timedelta, time
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -12,7 +11,7 @@ API_EVENT = "https://api.truckersmp.com/v2/events/{}"
 
 
 # =========================================================
-# HELPER FUNCTIONS
+# HELPERS
 # =========================================================
 
 def extract_event_id(value: str) -> int | None:
@@ -36,13 +35,15 @@ async def fetch_event(event_id: int):
 
 
 async def fetch_route_image(event_url: str):
-    """Scrape route map image from event page"""
+    """Fetch route image from TMP event page"""
     try:
+        headers = {"User-Agent": "Mozilla/5.0"}
         async with aiohttp.ClientSession() as session:
-            async with session.get(event_url, headers={"User-Agent": "Mozilla/5.0"}) as res:
+            async with session.get(event_url, headers=headers) as res:
                 html = await res.text()
 
-        match = re.search(r'<img[^>]+class="img-fluid"[^>]+src="([^"]+)"', html)
+        # More reliable route image detection
+        match = re.search(r'<img[^>]+src="([^"]+route[^"]+)"', html, re.IGNORECASE)
         if match:
             return match.group(1)
 
@@ -64,9 +65,6 @@ class TruckersMPEvents(commands.Cog):
     def cog_unload(self):
         self.reminder_loop.cancel()
 
-    # -----------------------------------------------------
-    # DATABASE INIT
-    # -----------------------------------------------------
     async def init_db(self):
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("""
@@ -80,7 +78,7 @@ class TruckersMPEvents(commands.Cog):
             await db.commit()
 
     # -----------------------------------------------------
-    # /event COMMAND
+    # /event
     # -----------------------------------------------------
     @app_commands.command(name="event", description="Post a TruckersMP event")
     @app_commands.describe(
@@ -109,7 +107,6 @@ class TruckersMPEvents(commands.Cog):
         if not data:
             return await interaction.followup.send("❌ Event not found.")
 
-        # Parse data
         title = data["name"]
         description = data["description"][:1000]
         start_time = data["start_at"]
@@ -132,8 +129,14 @@ class TruckersMPEvents(commands.Cog):
         embed.add_field(name="Date", value=dt.strftime("%d %b %Y"), inline=True)
         embed.add_field(name="Time (UTC)", value=dt.strftime("%H:%M"), inline=True)
 
+        # ---------------- ROUTE EMBED ----------------
+        route_embed = None
         if route_image:
-            embed.set_image(url=route_image)
+            route_embed = discord.Embed(
+                title="🗺️ Event Route",
+                color=discord.Color.purple()
+            )
+            route_embed.set_image(url=route_image)
 
         # ---------------- SLOT EMBED ----------------
         slot_embed = discord.Embed(
@@ -145,21 +148,16 @@ class TruckersMPEvents(commands.Cog):
         if slot_image:
             slot_embed.set_image(url=slot_image)
 
-        # ---------------- CALENDAR EMBED ----------------
-        cal = calendar.month(dt.year, dt.month)
-        cal_embed = discord.Embed(
-            title="📅 Event Calendar",
-            description=f"```\n{cal}\n```",
-            color=discord.Color.orange()
-        )
-
-        # Send to channel
+        # Send messages
         await channel.send(role.mention)
         await channel.send(embed=embed)
-        await channel.send(embed=slot_embed)
-        await channel.send(embed=cal_embed)
 
-        # Save event
+        if route_embed:
+            await channel.send(embed=route_embed)
+
+        await channel.send(embed=slot_embed)
+
+        # Save event for reminder
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT INTO events VALUES (?, ?, ?, ?)",
@@ -200,7 +198,6 @@ class TruckersMPEvents(commands.Cog):
                             )
                         except:
                             pass
-
             except:
                 continue
 
