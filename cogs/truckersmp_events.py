@@ -3,7 +3,7 @@ import aiosqlite
 import aiohttp
 import calendar
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -88,22 +88,12 @@ def build_event_embed(event):
     return embed
 
 
+# ONLY OFFICIAL ROUTE IMAGE
 def build_route_embed(event):
     route_img = None
 
-    # 1. Official TMP route image
     if event.get("route") and isinstance(event["route"], dict):
         route_img = event["route"].get("image")
-
-    # 2. Backup field
-    if not route_img:
-        route_img = event.get("route_image")
-
-    # 3. Fallback from description
-    if not route_img:
-        desc = event.get("description", "")
-        img, _ = extract_image_from_markdown(desc)
-        route_img = img
 
     route_img = fix_imgur_url(route_img)
 
@@ -111,11 +101,11 @@ def build_route_embed(event):
         return None
 
     embed = discord.Embed(
-        title="🗺 Event Route",
+        title="🗺 Official Event Route",
         color=discord.Color.blue()
     )
     embed.set_image(url=route_img)
-    embed.set_footer(text="Route image from TruckersMP")
+    embed.set_footer(text="Official route from TruckersMP")
     return embed
 
 
