@@ -85,7 +85,8 @@ class TruckersMPEvents(commands.Cog):
                     channel_id INTEGER,
                     message_ids TEXT,
                     event_date TEXT,
-                    end_date TEXT
+                    end_date TEXT,
+                    reminded INTEGER DEFAULT 0
                 )
             """)
             await db.execute("""
@@ -113,7 +114,7 @@ class TruckersMPEvents(commands.Cog):
         )
 
     # -----------------------------------------------------
-    # /event
+    # EVENT COMMAND
     # -----------------------------------------------------
     @app_commands.command(name="event", description="Post a TruckersMP event")
     async def event(
@@ -177,34 +178,34 @@ class TruckersMPEvents(commands.Cog):
         if slot_image:
             slot_embed.set_image(url=slot_image)
 
-        # Send messages and store IDs
-        sent_messages = []
-
+        # Send messages
+        sent_ids = []
         await channel.send(role.mention)
 
-        msg1 = await channel.send(embed=embed)
-        sent_messages.append(msg1.id)
+        msg = await channel.send(embed=embed)
+        sent_ids.append(msg.id)
 
         if route_embed:
-            msg2 = await channel.send(embed=route_embed)
-            sent_messages.append(msg2.id)
+            msg = await channel.send(embed=route_embed)
+            sent_ids.append(msg.id)
 
-        msg3 = await channel.send(embed=slot_embed)
-        sent_messages.append(msg3.id)
+        msg = await channel.send(embed=slot_embed)
+        sent_ids.append(msg.id)
 
         # Save event
         async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    event_id,
-                    interaction.guild.id,
-                    channel.id,
-                    ",".join(map(str, sent_messages)),
-                    event_date,
-                    end_date
-                )
-            )
+            await db.execute("""
+                INSERT INTO events 
+                (event_id, guild_id, channel_id, message_ids, event_date, end_date, reminded)
+                VALUES (?, ?, ?, ?, ?, ?, 0)
+            """, (
+                event_id,
+                interaction.guild.id,
+                channel.id,
+                ",".join(map(str, sent_ids)),
+                event_date,
+                end_date
+            ))
             await db.commit()
 
         await interaction.followup.send("✅ Event posted and reminder scheduled.")
@@ -214,24 +215,33 @@ class TruckersMPEvents(commands.Cog):
     # -----------------------------------------------------
     @app_commands.command(name="upcomingevents", description="Show upcoming events")
     async def upcomingevents(self, interaction: discord.Interaction):
+        today = datetime.utcnow().date()
+
         async with aiosqlite.connect(DB_NAME) as db:
             rows = await db.execute_fetchall(
                 "SELECT event_id, event_date FROM events WHERE guild_id=?",
                 (interaction.guild.id,)
             )
 
-        if not rows:
+        future_events = []
+        for event_id, event_date in rows:
+            date_obj = datetime.strptime(event_date, "%Y-%m-%d").date()
+            if date_obj >= today:
+                future_events.append((event_id, date_obj))
+
+        if not future_events:
             return await interaction.response.send_message(
                 "No upcoming events.", ephemeral=True
             )
+
+        future_events.sort(key=lambda x: x[1])
 
         embed = discord.Embed(
             title="📅 Upcoming Events",
             color=discord.Color.blue()
         )
 
-        for event_id, event_date in rows:
-            date_obj = datetime.strptime(event_date, "%Y-%m-%d")
+        for event_id, date_obj in future_events:
             embed.add_field(
                 name=f"Event {event_id}",
                 value=f"{date_obj.strftime('%d %b %Y')}\n"
@@ -244,7 +254,7 @@ class TruckersMPEvents(commands.Cog):
     # -----------------------------------------------------
     # REMINDER + CLEANUP LOOP
     # -----------------------------------------------------
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=15)
     async def reminder_loop(self):
         now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
         now_ist = now_utc.astimezone(IST)
@@ -255,39 +265,53 @@ class TruckersMPEvents(commands.Cog):
 
         settings_dict = {g: r for g, r in settings}
 
-        for event_id, guild_id, channel_id, message_ids, event_date, end_date in events:
+        for event in events:
+            event_id, guild_id, channel_id, message_ids, event_date, end_date, reminded = event
+
             try:
                 event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
                 end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
 
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    continue
+
                 # Reminder
                 reminder_role_id = settings_dict.get(guild_id)
-                if reminder_role_id:
-                    guild = self.bot.get_guild(guild_id)
-                    if guild:
-                        role = guild.get_role(reminder_role_id)
-                        if role and now_ist.date() == event_day and now_ist.hour == 7:
-                            for member in role.members:
-                                try:
-                                    await member.send(
-                                        f"⏰ Reminder: Event today!\n"
-                                        f"https://truckersmp.com/events/{event_id}"
-                                    )
-                                except:
-                                    pass
+                if (
+                    reminder_role_id
+                    and not reminded
+                    and now_ist.date() == event_day
+                    and now_ist.hour == 7
+                ):
+                    role = guild.get_role(reminder_role_id)
+                    if role:
+                        for member in role.members:
+                            try:
+                                await member.send(
+                                    f"⏰ Reminder: Event today!\n"
+                                    f"https://truckersmp.com/events/{event_id}"
+                                )
+                            except:
+                                pass
+
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        await db.execute(
+                            "UPDATE events SET reminded=1 WHERE event_id=? AND guild_id=?",
+                            (event_id, guild_id)
+                        )
+                        await db.commit()
 
                 # Auto delete after end
                 if now_ist.date() > end_day:
-                    guild = self.bot.get_guild(guild_id)
-                    if guild:
-                        channel = guild.get_channel(channel_id)
-                        if channel:
-                            for mid in message_ids.split(","):
-                                try:
-                                    msg = await channel.fetch_message(int(mid))
-                                    await msg.delete()
-                                except:
-                                    pass
+                    channel = guild.get_channel(channel_id)
+                    if channel:
+                        for mid in message_ids.split(","):
+                            try:
+                                msg = await channel.fetch_message(int(mid))
+                                await msg.delete()
+                            except:
+                                pass
 
                     async with aiosqlite.connect(DB_NAME) as db:
                         await db.execute(
