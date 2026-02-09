@@ -1,13 +1,12 @@
 import discord
 import aiosqlite
 import aiohttp
-import requests
 import calendar
 import re
-from bs4 import BeautifulSoup
 from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
+from bs4 import BeautifulSoup
 
 DB_NAME = "bot.db"
 TRUCKERSMP_API = "https://api.truckersmp.com/v2/events/"
@@ -25,7 +24,6 @@ async def init_event_table():
             role_id INTEGER,
             slot_number TEXT,
             slot_image TEXT,
-            manual_route TEXT,
             last_reminder INTEGER DEFAULT 0
         )
         """)
@@ -43,16 +41,23 @@ async def fetch_event(event_id: int):
             return data.get("response")
 
 
-# ================= SCRAPE ROUTE =================
-def fetch_route_image(event_url: str):
+# ================= ROUTE IMAGE FETCH =================
+async def fetch_route_image(event_id: int):
+    event_url = f"{TRUCKERSMP_EVENT_PAGE}{event_id}"
+
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(event_url, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, "html.parser")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(event_url, headers=headers, timeout=15) as r:
+                if r.status != 200:
+                    return None
 
-        img = soup.find("img", {"class": "img-fluid"})
-        if img and img.get("src"):
-            return img["src"]
+                html = await r.text()
+                soup = BeautifulSoup(html, "html.parser")
+
+                img = soup.find("img", {"class": "img-fluid"})
+                if img and img.get("src"):
+                    return img["src"]
 
     except Exception as e:
         print("Route fetch error:", e)
@@ -83,49 +88,35 @@ def extract_image_from_markdown(text: str):
     return None, text
 
 
-# ================= ROUTE IMAGE LOGIC =================
-def build_route_embed(event, manual_route):
-    route_img = None
+# ================= EMBED BUILDERS =================
+async def build_event_embed(event):
+    description = event.get("description", "No description")
+    image_url, clean_description = extract_image_from_markdown(description)
 
-    # 1. Manual route image
-    if manual_route:
-        route_img = manual_route
-
-    # 2. Official API route image
-    if not route_img and event.get("route"):
-        route_img = event["route"].get("image")
-
-    # 3. Backup API field
-    if not route_img:
-        route_img = event.get("route_image")
-
-    # 4. Scrape from webpage
-    if not route_img:
-        event_url = f"{TRUCKERSMP_EVENT_PAGE}{event['id']}"
-        route_img = fetch_route_image(event_url)
-
-    # 5. Description fallback
-    if not route_img:
-        desc = event.get("description", "")
-        match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', desc)
-        if match:
-            route_img = match.group(1)
-
-    route_img = fix_imgur_url(route_img)
-
-    if not route_img:
-        return None
+    event_url = f"{TRUCKERSMP_EVENT_PAGE}{event['id']}"
+    route_image = await fetch_route_image(event["id"])
 
     embed = discord.Embed(
-        title="🗺 Event Route",
-        color=discord.Color.blue()
+        title=event["name"],
+        url=event_url,
+        description=clean_description or "No description",
+        color=discord.Color.orange()
     )
-    embed.set_image(url=route_img)
-    embed.set_footer(text="Route from TruckersMP / Manual")
+
+    start = event["start_at"]
+    embed.add_field(name="📅 Date", value=start[:10])
+    embed.add_field(name="🕒 Time", value=start[11:16])
+
+    # Priority: route image > description image
+    if route_image:
+        embed.set_image(url=route_image)
+    elif image_url:
+        embed.set_image(url=image_url)
+
+    embed.set_footer(text="TruckersMP Event System")
     return embed
 
 
-# ================= SLOT EMBED =================
 def build_slot_embed(slot_number, slot_image):
     embed = discord.Embed(
         title="🚚 Slot Information",
@@ -141,31 +132,6 @@ def build_slot_embed(slot_number, slot_image):
     if slot_image:
         embed.set_image(url=fix_imgur_url(slot_image))
 
-    return embed
-
-
-# ================= EVENT EMBED =================
-def build_event_embed(event):
-    description = event.get("description", "No description")
-    image_url, clean_description = extract_image_from_markdown(description)
-
-    event_url = f"{TRUCKERSMP_EVENT_PAGE}{event['id']}"
-
-    embed = discord.Embed(
-        title=event["name"],
-        url=event_url,
-        description=clean_description or "No description",
-        color=discord.Color.orange()
-    )
-
-    start = event["start_at"]
-    embed.add_field(name="📅 Date", value=start[:10])
-    embed.add_field(name="🕒 Time", value=start[11:16])
-
-    if image_url:
-        embed.set_image(url=image_url)
-
-    embed.set_footer(text="TruckersMP Event System")
     return embed
 
 
@@ -202,8 +168,7 @@ class TMPEvents(commands.Cog):
         channel: discord.TextChannel,
         role: discord.Role,
         slot_number: str,
-        slot_image: str = None,
-        route_image: str = None
+        slot_image: str = None
     ):
         await interaction.response.defer()
 
@@ -220,16 +185,15 @@ class TMPEvents(commands.Cog):
             await db.execute("""
             INSERT OR REPLACE INTO tmp_events
             (guild_id, event_id, channel_id, role_id,
-             slot_number, slot_image, manual_route)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+             slot_number, slot_image)
+            VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 interaction.guild.id,
                 event_id,
                 channel.id,
                 role.id,
                 slot_number,
-                slot_image,
-                route_image
+                slot_image
             ))
             await db.commit()
 
@@ -240,7 +204,7 @@ class TMPEvents(commands.Cog):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("""
             SELECT event_id, channel_id, role_id,
-                   slot_number, slot_image, manual_route
+                   slot_number, slot_image
             FROM tmp_events WHERE guild_id=?
             """, (guild_id,))
             row = await cur.fetchone()
@@ -248,24 +212,26 @@ class TMPEvents(commands.Cog):
         if not row:
             return
 
-        event_id, channel_id, role_id, slot_number, slot_image, manual_route = row
+        event_id, channel_id, role_id, slot_number, slot_image = row
         event = await fetch_event(event_id)
         if not event:
             return
 
         guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+
         channel = guild.get_channel(channel_id)
         role = guild.get_role(role_id)
 
+        if not channel:
+            return
+
         await channel.send(
             content=role.mention if role else None,
-            embed=build_event_embed(event),
+            embed=await build_event_embed(event),
             view=EventButtonView(event_id)
         )
-
-        route_embed = build_route_embed(event, manual_route)
-        if route_embed:
-            await channel.send(embed=route_embed)
 
         await channel.send(embed=build_slot_embed(slot_number, slot_image))
 
