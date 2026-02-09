@@ -252,9 +252,9 @@ class EventSystem(commands.Cog):
                 return data.get("response")
 
     # -----------------------------------------------------
-    # /event (FULL DETAILS)
+    # /event
     # -----------------------------------------------------
-    @app_commands.command(name="event", description="Create convoy event with full TruckersMP details")
+    @app_commands.command(name="event", description="Create convoy event with full details")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def event(
         self,
@@ -282,14 +282,29 @@ class EventSystem(commands.Cog):
         dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
         start_timestamp = int(dt.timestamp())
 
+        # Departure
         departure = data.get("departure") or {}
-        destination = data.get("arrival") or {}
-
         dep_text = f"{departure.get('city','Unknown')} ({departure.get('location','Unknown')})"
 
+        # Destination
+        destination = data.get("arrival") or data.get("destination") or {}
         dest_text = None
         if destination.get("city") or destination.get("location"):
             dest_text = f"{destination.get('city','Unknown')} ({destination.get('location','Unknown')})"
+
+        # Extra info
+        organizer = data.get("organizer", {}).get("name", "Unknown")
+        distance = data.get("distance")
+        dlc = data.get("dlc")
+        external = data.get("external_url")
+
+        extra_info = [f"👤 Organizer: {organizer}"]
+        if distance:
+            extra_info.append(f"📏 Distance: {distance} km")
+        if dlc:
+            extra_info.append(f"📦 DLC: {dlc}")
+        if external:
+            extra_info.append(f"🔗 [Event Page]({external})")
 
         api_route = data.get("map")
         final_route = routeimage if routeimage else api_route
@@ -310,6 +325,12 @@ class EventSystem(commands.Cog):
 
         if dest_text:
             main_embed.add_field(name="🏁 Destination", value=dest_text, inline=False)
+
+        main_embed.add_field(
+            name="ℹ️ Event Info",
+            value="\n".join(extra_info),
+            inline=False
+        )
 
         if banner:
             main_embed.set_image(url=banner)
@@ -348,69 +369,6 @@ class EventSystem(commands.Cog):
                 interaction.user.id
             ))
             await db.commit()
-
-    # -----------------------------------------------------
-    # /event_calendar
-    # -----------------------------------------------------
-    @app_commands.command(name="event_calendar", description="View upcoming events")
-    async def event_calendar(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        now = int(time.time())
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("""
-                SELECT event_id, slot_number, start_time
-                FROM events
-                WHERE start_time > ?
-                ORDER BY start_time ASC
-                LIMIT 10
-            """, (now,))
-            rows = await cur.fetchall()
-
-        if not rows:
-            return await interaction.followup.send("No upcoming events.")
-
-        embed = discord.Embed(title="📅 Upcoming Events", color=discord.Color.orange())
-
-        for event_id, slot, start_time in rows:
-            embed.add_field(
-                name=f"Event {event_id}",
-                value=f"<t:{start_time}:F>\nSlot: {slot}\nhttps://truckersmp.com/events/{event_id}",
-                inline=False
-            )
-
-        await interaction.followup.send(embed=embed)
-
-    # -----------------------------------------------------
-    # /event_reminder_test
-    # -----------------------------------------------------
-    @app_commands.command(name="event_reminder_test", description="Send test reminder")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def event_reminder_test(self, interaction: discord.Interaction, event_id: str):
-        await interaction.response.defer(ephemeral=True)
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("""
-                SELECT role_id, channel_id
-                FROM events
-                WHERE event_id = ?
-            """, (event_id,))
-            row = await cur.fetchone()
-
-        if not row:
-            return await interaction.followup.send("❌ Event not found.")
-
-        role = interaction.guild.get_role(row[0])
-        channel = interaction.guild.get_channel(row[1])
-
-        if role and channel:
-            await channel.send(
-                f"🧪 {role.mention} TEST REMINDER\n"
-                f"https://truckersmp.com/events/{event_id}"
-            )
-
-        await interaction.followup.send("✅ Test reminder sent.")
 
 
 # ---------------------------------------------------------
