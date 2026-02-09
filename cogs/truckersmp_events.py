@@ -3,7 +3,7 @@ import aiosqlite
 import requests
 import calendar
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -42,7 +42,6 @@ def extract_image_from_markdown(text: str):
     if not text:
         return None, text
 
-    # Support ![](url) and ![alt](url)
     match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', text)
     if match:
         image_url = match.group(1)
@@ -53,9 +52,8 @@ def extract_image_from_markdown(text: str):
 
 
 # ================= EMBED BUILDERS =================
-def build_event_embed(event, slot_number):
+def build_event_embed(event):
     description = event.get("description", "No description")
-
     image_url, clean_description = extract_image_from_markdown(description)
 
     embed = discord.Embed(
@@ -67,7 +65,6 @@ def build_event_embed(event, slot_number):
     start = event["start_at"]
     embed.add_field(name="📅 Date", value=start[:10])
     embed.add_field(name="🕒 Time", value=start[11:16])
-    embed.add_field(name="🎯 Slot", value=slot_number or "N/A")
 
     if image_url:
         embed.set_image(url=image_url)
@@ -76,12 +73,18 @@ def build_event_embed(event, slot_number):
     return embed
 
 
+# FIXED ROUTE IMAGE FETCH
 def build_route_embed(event):
-    route = event.get("route")
-    if not route:
-        return None
+    route_img = None
 
-    route_img = route.get("image")
+    # Primary location
+    if event.get("route"):
+        route_img = event["route"].get("image")
+
+    # Fallback location (some TMP events use this)
+    if not route_img:
+        route_img = event.get("route_image")
+
     if not route_img:
         return None
 
@@ -93,131 +96,23 @@ def build_route_embed(event):
     return embed
 
 
-def build_slot_embed(slot_image):
-    if not slot_image:
-        return None
-
+# SLOT EMBED (separate)
+def build_slot_embed(slot_number, slot_image):
     embed = discord.Embed(
-        title="🚚 Slot Image",
+        title="🚚 Slot Information",
         color=discord.Color.green()
-    )
-    embed.set_image(url=slot_image)
-    return embed
-
-
-def build_month_view(event, slot_number, year, month):
-    event_time = datetime.fromisoformat(
-        event["start_at"].replace("Z", "")
-    )
-
-    event_day = event_time.day if (
-        event_time.year == year and event_time.month == month
-    ) else None
-
-    cal = calendar.monthcalendar(year, month)
-    calendar_text = "Mo Tu We Th Fr Sa Su\n"
-
-    for week in cal:
-        for day in week:
-            if day == 0:
-                calendar_text += "   "
-            elif day == event_day:
-                calendar_text += "🚚 "
-            else:
-                calendar_text += f"{str(day).rjust(2)} "
-        calendar_text += "\n"
-
-    embed = discord.Embed(
-        title=f"📅 {calendar.month_name[month]} {year}",
-        description=f"**{event['name']}**",
-        color=discord.Color.gold()
     )
 
     embed.add_field(
-        name="Calendar",
-        value=f"```{calendar_text}```",
+        name="🎯 Slot Number",
+        value=slot_number or "N/A",
         inline=False
     )
 
-    embed.set_footer(text="🚚 = Event Day")
+    if slot_image:
+        embed.set_image(url=slot_image)
+
     return embed
-
-
-# ================= CALENDAR UI =================
-class CalendarView(discord.ui.View):
-    def __init__(self, event, slot_number, slot_image, year, month):
-        super().__init__(timeout=300)
-        self.event = event
-        self.slot_number = slot_number
-        self.slot_image = slot_image
-        self.year = year
-        self.month = month
-        self.update_buttons()
-
-    def update_buttons(self):
-        self.clear_items()
-
-        self.add_item(CalendarNavButton("◀", -1))
-
-        event_time = datetime.fromisoformat(
-            self.event["start_at"].replace("Z", "")
-        )
-        if event_time.year == self.year and event_time.month == self.month:
-            self.add_item(EventDayButton(event_time.day))
-
-        self.add_item(CalendarNavButton("▶", 1))
-
-
-class CalendarNavButton(discord.ui.Button):
-    def __init__(self, label, direction):
-        super().__init__(label=label, style=discord.ButtonStyle.secondary)
-        self.direction = direction
-
-    async def callback(self, interaction: discord.Interaction):
-        view: CalendarView = self.view
-
-        view.month += self.direction
-
-        if view.month < 1:
-            view.month = 12
-            view.year -= 1
-        elif view.month > 12:
-            view.month = 1
-            view.year += 1
-
-        view.update_buttons()
-
-        embed = build_month_view(
-            view.event,
-            view.slot_number,
-            view.year,
-            view.month
-        )
-
-        await interaction.response.edit_message(embed=embed, view=view)
-
-
-class EventDayButton(discord.ui.Button):
-    def __init__(self, day):
-        super().__init__(
-            label=f"🚚 {day}",
-            style=discord.ButtonStyle.success
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        view: CalendarView = self.view
-        event = view.event
-
-        embed = build_event_embed(event, view.slot_number)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        route_embed = build_route_embed(event)
-        if route_embed:
-            await interaction.followup.send(embed=route_embed, ephemeral=True)
-
-        slot_embed = build_slot_embed(view.slot_image)
-        if slot_embed:
-            await interaction.followup.send(embed=slot_embed, ephemeral=True)
 
 
 # ================= COG =================
@@ -269,42 +164,6 @@ class TMPEvents(commands.Cog):
         await interaction.followup.send("✅ Event saved")
         await self.post_event(interaction.guild.id)
 
-    # ---------------- /CALENDAR ----------------
-    @app_commands.command(
-        name="calendar",
-        description="Interactive monthly calendar"
-    )
-    async def calendar(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("""
-            SELECT event_id, slot_number, slot_image
-            FROM tmp_events
-            WHERE guild_id=?
-            """, (interaction.guild.id,))
-            row = await cur.fetchone()
-
-        if not row:
-            return await interaction.followup.send("❌ No event set.")
-
-        event_id, slot_number, slot_image = row
-        event = fetch_event(event_id)
-        if not event:
-            return await interaction.followup.send("❌ Event not found.")
-
-        event_time = datetime.fromisoformat(
-            event["start_at"].replace("Z", "")
-        )
-
-        year = event_time.year
-        month = event_time.month
-
-        embed = build_month_view(event, slot_number, year, month)
-        view = CalendarView(event, slot_number, slot_image, year, month)
-
-        await interaction.followup.send(embed=embed, view=view)
-
     # ---------------- POST EVENT ----------------
     async def post_event(self, guild_id):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -332,16 +191,18 @@ class TMPEvents(commands.Cog):
         if not channel:
             return
 
-        embed = build_event_embed(event, slot_number)
+        # Main event embed
+        embed = build_event_embed(event)
         await channel.send(content=role.mention if role else None, embed=embed)
 
+        # Route embed
         route_embed = build_route_embed(event)
         if route_embed:
             await channel.send(embed=route_embed)
 
-        slot_embed = build_slot_embed(slot_image)
-        if slot_embed:
-            await channel.send(embed=slot_embed)
+        # Slot embed (always send)
+        slot_embed = build_slot_embed(slot_number, slot_image)
+        await channel.send(embed=slot_embed)
 
     # ---------------- REMINDER LOOP ----------------
     @tasks.loop(minutes=10)
