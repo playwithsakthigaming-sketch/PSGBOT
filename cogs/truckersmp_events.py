@@ -126,6 +126,7 @@ class TruckersMPEvents(commands.Cog):
         description = data["description"][:1000]
         start_time = data["start_at"]
         server = data["server"]["name"]
+        banner = data.get("banner")
         url = f"https://truckersmp.com/events/{event_id}"
 
         # Convert UTC → IST
@@ -147,6 +148,9 @@ class TruckersMPEvents(commands.Cog):
         embed.add_field(name="Server", value=server, inline=True)
         embed.add_field(name="Date (IST)", value=dt_ist.strftime("%d %b %Y"), inline=True)
         embed.add_field(name="Time (IST)", value=dt_ist.strftime("%H:%M"), inline=True)
+
+        if banner:
+            embed.set_image(url=banner)
 
         # ---------------- ROUTE EMBED ----------------
         route_embed = None
@@ -194,7 +198,6 @@ class TruckersMPEvents(commands.Cog):
         await interaction.response.defer()
 
         embed = await self.build_calendar_embed()
-
         msg = await channel.send(embed=embed)
 
         self.calendar_channel_id = channel.id
@@ -227,7 +230,7 @@ class TruckersMPEvents(commands.Cog):
         return embed
 
     # -----------------------------------------------------
-    # CALENDAR AUTO REFRESH (2 minutes)
+    # CALENDAR AUTO REFRESH
     # -----------------------------------------------------
     @tasks.loop(minutes=2)
     async def calendar_loop(self):
@@ -248,7 +251,7 @@ class TruckersMPEvents(commands.Cog):
     # -----------------------------------------------------
     # REMINDER LOOP (IST 7 AM)
     # -----------------------------------------------------
-    @tasks.loop(minutes=720)
+    @tasks.loop(minutes=30)
     async def reminder_loop(self):
         now_ist = datetime.now(IST)
 
