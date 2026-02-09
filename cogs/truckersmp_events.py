@@ -1,158 +1,240 @@
 import discord
 import aiosqlite
-import re
 import requests
-from bs4 import BeautifulSoup
-from discord.ext import commands
+import asyncio
+from datetime import datetime, timedelta
+from discord.ext import commands, tasks
 from discord import app_commands
 
 DB_NAME = "bot.db"
 
-IMAGE_REGEX = r'!\[\]\((https?:\/\/[^\s]+)\)'
+TRUCKERSMP_API = "https://api.truckersmp.com/v2/events/"
+
+# ================= DATABASE =================
+async def init_event_table():
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS tmp_events (
+            guild_id INTEGER PRIMARY KEY,
+            event_id INTEGER,
+            channel_id INTEGER,
+            role_id INTEGER,
+            slot_number TEXT,
+            slot_image TEXT,
+            last_reminder INTEGER DEFAULT 0
+        )
+        """)
+        await db.commit()
 
 
-# ================= IMAGE PARSER =================
-def extract_images(text: str):
-    return re.findall(IMAGE_REGEX, text)
+# ================= API FETCH =================
+def fetch_event(event_id: int):
+    url = TRUCKERSMP_API + str(event_id)
+    r = requests.get(url, timeout=15)
+    if r.status_code != 200:
+        return None
+    return r.json().get("response")
 
 
-def remove_image_tags(text: str):
-    return re.sub(IMAGE_REGEX, "", text)
-
-
-# ================= TRUCKERSMP ROUTE FETCH =================
-def fetch_route_image(event_url: str):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(event_url, headers=headers, timeout=15)
-        soup = BeautifulSoup(res.text, "html.parser")
-
-        img = soup.find("img", {"class": "img-fluid"})
-        if img and img.get("src"):
-            return img["src"]
-
-    except Exception as e:
-        print("Route fetch error:", e)
-
-    return None
-
-
-# ================= EMBED BUILDERS =================
-def build_main_embed(title, description, main_image=None):
+# ================= EMBED BUILDER =================
+def build_event_embed(event, slot_number):
     embed = discord.Embed(
-        title=title,
-        description=description,
+        title=event["name"],
+        description=event.get("description", "No description"),
         color=discord.Color.orange()
     )
-    if main_image:
-        embed.set_image(url=main_image)
+
+    start = event["start_at"]
+    embed.add_field(name="📅 Date", value=start[:10])
+    embed.add_field(name="🕒 Time", value=start[11:16])
+    embed.add_field(name="🎯 Slot", value=slot_number or "N/A")
+
+    embed.set_footer(text="TruckersMP Event System")
+    return embed
+
+
+def build_route_embed(event):
+    route_img = event.get("route", {}).get("image")
+    if not route_img:
+        return None
+
+    embed = discord.Embed(
+        title="🗺 Route Map",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url=route_img)
     return embed
 
 
 def build_slot_embed(slot_image):
+    if not slot_image:
+        return None
+
     embed = discord.Embed(
-        title="🚚 Slot Information",
-        color=discord.Color.blue()
+        title="🚚 Slot Image",
+        color=discord.Color.green()
     )
     embed.set_image(url=slot_image)
     return embed
 
 
-def build_route_embed(route_image):
-    embed = discord.Embed(
-        title="🗺 Route Map",
-        color=discord.Color.green()
-    )
-    embed.set_image(url=route_image)
-    return embed
-
-
 # ================= COG =================
-class TruckersMPEvents(commands.Cog):
+class TMPEvents(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.auto_refresh.start()
+        self.reminder_loop.start()
 
-    async def init_db(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-            CREATE TABLE IF NOT EXISTS truck_events (
-                guild_id INTEGER PRIMARY KEY,
-                channel_id INTEGER,
-                role_id INTEGER,
-                title TEXT,
-                description TEXT,
-                event_url TEXT
-            )
-            """)
-            await db.commit()
+    async def cog_load(self):
+        await init_event_table()
 
-    # ================= /event COMMAND =================
-    @app_commands.command(name="event", description="Send TruckersMP event embed")
-    @app_commands.checks.has_permissions(administrator=True)
+    # ---------------- /EVENT ----------------
+    @app_commands.command(name="event", description="Setup TruckersMP event")
     async def event(
         self,
         interaction: discord.Interaction,
+        event_url: str,
         channel: discord.TextChannel,
         role: discord.Role,
-        title: str,
-        description: str,
-        event_url: str = None
+        slot_number: str,
+        slot_image: str = None
     ):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
 
-        # Save event
+        # Extract ID
+        try:
+            event_id = int(event_url.split("/")[-1])
+        except:
+            return await interaction.followup.send("❌ Invalid event URL")
+
+        event = fetch_event(event_id)
+        if not event:
+            return await interaction.followup.send("❌ Event not found")
+
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("""
-            INSERT OR REPLACE INTO truck_events
-            (guild_id, channel_id, role_id, title, description, event_url)
+            INSERT OR REPLACE INTO tmp_events
+            (guild_id, event_id, channel_id, role_id, slot_number, slot_image)
             VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 interaction.guild.id,
+                event_id,
                 channel.id,
                 role.id,
-                title,
-                description,
-                event_url
+                slot_number,
+                slot_image
             ))
             await db.commit()
 
-        # Extract images
-        images = extract_images(description)
-        clean_desc = remove_image_tags(description)
+        await interaction.followup.send("✅ Event saved")
 
-        main_image = images[0] if images else None
-        slot_image = images[1] if len(images) > 1 else None
+        await self.post_event(interaction.guild.id)
 
-        # Fetch route image
-        route_image = None
-        if event_url:
-            route_image = fetch_route_image(event_url)
+    # ---------------- POST EVENT ----------------
+    async def post_event(self, guild_id):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+            SELECT event_id, channel_id, role_id, slot_number, slot_image
+            FROM tmp_events WHERE guild_id=?
+            """, (guild_id,))
+            row = await cur.fetchone()
 
-        try:
-            # MAIN EMBED
-            main_embed = build_main_embed(title, clean_desc, main_image)
+        if not row:
+            return
 
-            await channel.send(
-                content=role.mention if role else None,
-                embed=main_embed
-            )
+        event_id, channel_id, role_id, slot_number, slot_image = row
+        event = fetch_event(event_id)
+        if not event:
+            return
 
-            # SLOT EMBED
-            if slot_image:
-                await channel.send(embed=build_slot_embed(slot_image))
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
 
-            # ROUTE EMBED
-            if route_image:
-                await channel.send(embed=build_route_embed(route_image))
+        channel = guild.get_channel(channel_id)
+        role = guild.get_role(role_id)
 
-        except Exception as e:
-            print("Event send error:", e)
+        if not channel:
+            return
 
-        await interaction.followup.send("✅ Event sent successfully.")
+        # Main embed
+        embed = build_event_embed(event, slot_number)
+        await channel.send(content=role.mention if role else None, embed=embed)
+
+        # Route embed
+        route_embed = build_route_embed(event)
+        if route_embed:
+            await channel.send(embed=route_embed)
+
+        # Slot embed
+        slot_embed = build_slot_embed(slot_image)
+        if slot_embed:
+            await channel.send(embed=slot_embed)
+
+    # ---------------- AUTO REFRESH ----------------
+    @tasks.loop(minutes=2)
+    async def auto_refresh(self):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("SELECT guild_id FROM tmp_events")
+            rows = await cur.fetchall()
+
+        for (guild_id,) in rows:
+            await self.post_event(guild_id)
+
+    # ---------------- REMINDER LOOP ----------------
+    @tasks.loop(minutes=10)
+    async def reminder_loop(self):
+        now = datetime.utcnow()
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute("""
+            SELECT guild_id, event_id, role_id, last_reminder
+            FROM tmp_events
+            """)
+            rows = await cur.fetchall()
+
+        for guild_id, event_id, role_id, last_reminder in rows:
+            event = fetch_event(event_id)
+            if not event:
+                continue
+
+            event_time = datetime.fromisoformat(event["start_at"].replace("Z", ""))
+            reminder_time = event_time.replace(hour=7, minute=0, second=0)
+
+            if now >= reminder_time:
+                if last_reminder and last_reminder > int(reminder_time.timestamp()):
+                    continue
+
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    continue
+
+                role = guild.get_role(role_id)
+                if not role:
+                    continue
+
+                for member in role.members:
+                    try:
+                        await member.send(
+                            f"🚚 Reminder: Event **{event['name']}** is today!"
+                        )
+                    except:
+                        pass
+
+                async with aiosqlite.connect(DB_NAME) as db:
+                    await db.execute("""
+                    UPDATE tmp_events
+                    SET last_reminder=?
+                    WHERE guild_id=?
+                    """, (int(now.timestamp()), guild_id))
+                    await db.commit()
+
+    @auto_refresh.before_loop
+    @reminder_loop.before_loop
+    async def before_loops(self):
+        await self.bot.wait_until_ready()
 
 
 # ================= SETUP =================
 async def setup(bot: commands.Bot):
-    cog = TruckersMPEvents(bot)
-    await cog.init_db()
-    await bot.add_cog(cog)
+    await bot.add_cog(TMPEvents(bot))
