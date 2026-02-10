@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
+import datetime
 import asyncio
 import random
 import time
@@ -48,12 +49,17 @@ class SelfRoleButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         member = interaction.user
+
         if self.role in member.roles:
             await member.remove_roles(self.role)
-            await interaction.response.send_message(f"❌ Removed **{self.role.name}**", ephemeral=True)
+            await interaction.response.send_message(
+                f"❌ Removed **{self.role.name}**", ephemeral=True
+            )
         else:
             await member.add_roles(self.role)
-            await interaction.response.send_message(f"✅ Added **{self.role.name}**", ephemeral=True)
+            await interaction.response.send_message(
+                f"✅ Added **{self.role.name}**", ephemeral=True
+            )
 
 
 class SelfRoleView(discord.ui.View):
@@ -112,33 +118,24 @@ class Admin(commands.Cog):
             await db.commit()
 
     # ========================
-    # SETTINGS HELPERS
+    # SETTINGS CHECK
     # ========================
     async def is_dm_autoclean_enabled(self):
         async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("SELECT value FROM settings WHERE key='dm_autoclean'")
+            cur = await db.execute(
+                "SELECT value FROM settings WHERE key='dm_autoclean'"
+            )
             row = await cur.fetchone()
             return row and row[0] == "on"
-
-    async def get_dm_interval(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("SELECT value FROM settings WHERE key='dm_interval'")
-            row = await cur.fetchone()
-            return int(row[0]) if row else 60
 
     # ========================
     # AUTO DELETE DMS
     # ========================
-    @tasks.loop(minutes=1)
+    @tasks.loop(hours=1)
     async def auto_delete_dms(self):
         await self.bot.wait_until_ready()
+
         if not await self.is_dm_autoclean_enabled():
-            return
-
-        interval = await self.get_dm_interval()
-        current_minute = int(time.time() // 60)
-
-        if current_minute % interval != 0:
             return
 
         for channel in self.bot.private_channels:
@@ -152,16 +149,42 @@ class Admin(commands.Cog):
                     pass
 
     # ========================
-    # INFO COMMANDS
+    # TOGGLE COMMAND
+    # ========================
+    @app_commands.command(name="dm_autoclean")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def dm_autoclean(self, interaction: discord.Interaction, state: str):
+        state = state.lower()
+
+        if state not in ["on", "off"]:
+            return await interaction.response.send_message("❌ Use `on` or `off`", ephemeral=True)
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('dm_autoclean', ?)",
+                (state,)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            f"🧹 DM Auto Cleanup is now **{state.upper()}**",
+            ephemeral=True
+        )
+
+    # ========================
+    # BASIC COMMANDS
     # ========================
     @app_commands.command(name="ping")
     async def ping(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"🏓 Pong `{round(self.bot.latency*1000)}ms`", ephemeral=True)
+        await interaction.response.send_message(
+            f"🏓 Pong `{round(self.bot.latency*1000)}ms`", ephemeral=True
+        )
 
     @app_commands.command(name="serverinfo")
     async def serverinfo(self, interaction: discord.Interaction):
         g = interaction.guild
         online = sum(m.status != discord.Status.offline for m in g.members)
+
         embed = discord.Embed(title="📊 Server Info", color=discord.Color.green())
         embed.add_field(name="Name", value=g.name)
         embed.add_field(name="Members", value=g.member_count)
@@ -169,42 +192,112 @@ class Admin(commands.Cog):
         embed.add_field(name="Channels", value=len(g.channels))
         embed.add_field(name="Roles", value=len(g.roles))
         embed.add_field(name="Boost Level", value=g.premium_tier)
+
         if g.icon:
             embed.set_thumbnail(url=g.icon.url)
+
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="botinfo")
     async def botinfo(self, interaction: discord.Interaction):
         uptime = int(time.time() - START_TIME)
+
         embed = discord.Embed(title="🤖 Bot Info", color=discord.Color.blue())
         embed.add_field(name="Servers", value=len(self.bot.guilds))
         embed.add_field(name="Users", value=len(self.bot.users))
         embed.add_field(name="Latency", value=f"{round(self.bot.latency*1000)}ms")
         embed.add_field(name="Uptime", value=f"{uptime//3600}h {(uptime%3600)//60}m")
-        await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="playerinfo")
-    async def playerinfo(self, interaction: discord.Interaction, member: discord.Member = None):
-        member = member or interaction.user
-        premium_status = "❌ No"
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("SELECT tier FROM premium WHERE user_id=?", (member.id,))
-            row = await cur.fetchone()
-            if row:
-                premium_status = f"✅ {row[0]}"
-
-        embed = discord.Embed(title="👤 Player Info", color=discord.Color.blue())
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="Username", value=member.name)
-        embed.add_field(name="ID", value=member.id)
-        embed.add_field(name="Premium(DB)", value=premium_status)
-        embed.add_field(name="Joined", value=member.joined_at.strftime("%d-%m-%Y") if member.joined_at else "Unknown")
-        embed.add_field(name="Created", value=member.created_at.strftime("%d-%m-%Y"))
-        embed.add_field(name="Top Role", value=member.top_role.mention)
         await interaction.response.send_message(embed=embed)
 
     # ========================
-    # SETUP
+    # DM COMMANDS
     # ========================
+    @app_commands.command(name="dm")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def dm(self, interaction: discord.Interaction, user: discord.User, title: str, message: str):
+        embed = discord.Embed(title=title, description=message)
+
+        async def send_dm():
+            await user.send(embed=embed)
+            await interaction.followup.send("✅ DM Sent", ephemeral=True)
+
+        view = ConfirmView(send_dm)
+        await interaction.response.send_message("Confirm DM?", embed=embed, view=view, ephemeral=True)
+
+    @app_commands.command(name="dmall")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def dmall(self, interaction: discord.Interaction, role: discord.Role, title: str, message: str):
+        embed = discord.Embed(title=title, description=message)
+
+        async def send_bulk():
+            count = 0
+            for m in role.members:
+                if not m.bot:
+                    try:
+                        await m.send(embed=embed)
+                        count += 1
+                        await asyncio.sleep(DM_DELAY)
+                    except:
+                        pass
+            await interaction.followup.send(f"✅ DM sent to {count} users", ephemeral=True)
+
+        view = ConfirmView(send_bulk)
+        await interaction.response.send_message("Confirm DM All?", embed=embed, view=view, ephemeral=True)
+
+    # ========================
+    # SELF ROLE
+    # ========================
+    @app_commands.command(name="selfrole")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def selfrole(self, interaction: discord.Interaction, channel: discord.TextChannel, title: str, description: str, imageurl: str, roles: str):
+        await interaction.response.defer(ephemeral=True)
+
+        pairs = []
+        try:
+            for item in roles.split(","):
+                role_part, emoji = item.split(":")
+                role_id = int(role_part.replace("<@&", "").replace(">", ""))
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    pairs.append((role, emoji))
+        except:
+            return await interaction.followup.send("❌ Format error! Use: @Role:emoji,@Role2:emoji", ephemeral=True)
+
+        embed = discord.Embed(title=title, description=description)
+        if imageurl:
+            embed.set_image(url=imageurl)
+
+        view = SelfRoleView(pairs)
+        await channel.send(embed=embed, view=view)
+        await interaction.followup.send("✅ Self role panel created!", ephemeral=True)
+
+    # ========================
+    # CLEAR + DELETE + RESTART
+    # ========================
+    @app_commands.command(name="clear")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def clear(self, interaction: discord.Interaction, amount: int):
+        await interaction.response.defer(ephemeral=True)
+        deleted = await interaction.channel.purge(limit=amount)
+        await interaction.followup.send(f"🧹 Deleted {len(deleted)} messages", ephemeral=True)
+
+    @app_commands.command(name="delete_channel")
+    @app_commands.checks.has_permissions(manage_channels=True)
+    async def delete_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await channel.delete()
+        await interaction.response.send_message("🗑 Channel deleted", ephemeral=True)
+
+    @app_commands.command(name="restart")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def restart(self, interaction: discord.Interaction):
+        await interaction.response.send_message("♻ Restarting bot...", ephemeral=True)
+        await self.bot.close()
+        os.execv(sys.executable, ['python'] + sys.argv)
+
+
+# ========================
+# SETUP
+# ========================
 async def setup(bot: commands.Bot):
     await bot.add_cog(Admin(bot))
