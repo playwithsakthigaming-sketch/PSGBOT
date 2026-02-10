@@ -74,13 +74,13 @@ class TruckersMPEvents(commands.Cog):
         self.calendar_message_id = None
         self.calendar_channel_id = None
         self.reminder_loop.start()
-        self.calendar_loop.start()
         self.cleanup_loop.start()
+        self.calendar_loop.start()
 
     def cog_unload(self):
         self.reminder_loop.cancel()
-        self.calendar_loop.cancel()
         self.cleanup_loop.cancel()
+        self.calendar_loop.cancel()
 
     async def init_db(self):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -126,10 +126,8 @@ class TruckersMPEvents(commands.Cog):
         banner = data.get("banner")
         url = f"https://truckersmp.com/events/{event_id}"
 
-        # Convert UTC → IST
         dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST)
-
         event_date = dt_ist.strftime("%Y-%m-%d")
 
         route_image = await fetch_route_image(url)
@@ -167,7 +165,6 @@ class TruckersMPEvents(commands.Cog):
         if slot_image:
             slot_embed.set_image(url=slot_image)
 
-        # Send messages
         await channel.send(role.mention)
         await channel.send(embed=embed)
 
@@ -187,9 +184,69 @@ class TruckersMPEvents(commands.Cog):
         await interaction.followup.send("✅ Event posted and reminder scheduled.")
 
     # -----------------------------------------------------
-    # REMINDER LOOP (IST 7 AM)
+    # /calendar
     # -----------------------------------------------------
-    @tasks.loop(minutes=3)
+    @app_commands.command(name="calendar", description="Create event calendar")
+    async def calendar(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer()
+
+        embed = await self.build_calendar_embed()
+        msg = await channel.send(embed=embed)
+
+        self.calendar_channel_id = channel.id
+        self.calendar_message_id = msg.id
+
+        await interaction.followup.send("📅 Calendar created and auto-refresh enabled.")
+
+    async def build_calendar_embed(self):
+        embed = discord.Embed(
+            title="📅 Event Calendar",
+            color=discord.Color.orange()
+        )
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute(
+                "SELECT event_id, event_date FROM events ORDER BY event_date"
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        if not rows:
+            embed.description = "No upcoming events."
+            return embed
+
+        lines = []
+        for event_id, event_date in rows:
+            dt = datetime.strptime(event_date, "%Y-%m-%d")
+            formatted = dt.strftime("%d %b %Y")
+            url = f"https://truckersmp.com/events/{event_id}"
+            lines.append(f"**{formatted}** → [Event Link]({url})")
+
+        embed.description = "\n".join(lines)
+        return embed
+
+    # -----------------------------------------------------
+    # CALENDAR AUTO REFRESH
+    # -----------------------------------------------------
+    @tasks.loop(minutes=2)
+    async def calendar_loop(self):
+        if not self.calendar_channel_id or not self.calendar_message_id:
+            return
+
+        channel = self.bot.get_channel(self.calendar_channel_id)
+        if not channel:
+            return
+
+        try:
+            msg = await channel.fetch_message(self.calendar_message_id)
+            embed = await self.build_calendar_embed()
+            await msg.edit(embed=embed)
+        except:
+            pass
+
+    # -----------------------------------------------------
+    # REMINDER LOOP (7 AM IST)
+    # -----------------------------------------------------
+    @tasks.loop(minutes=30)
     async def reminder_loop(self):
         now_ist = datetime.now(IST)
 
@@ -287,6 +344,7 @@ class TruckersMPEvents(commands.Cog):
     # -----------------------------------------------------
     @reminder_loop.before_loop
     @cleanup_loop.before_loop
+    @calendar_loop.before_loop
     async def before_loops(self):
         await self.bot.wait_until_ready()
         await self.init_db()
