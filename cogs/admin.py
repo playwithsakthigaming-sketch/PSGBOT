@@ -1,22 +1,34 @@
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
-import datetime
 import asyncio
-import random
 import time
 import aiosqlite
 import os
 import sys
 import aiohttp
+from io import BytesIO
+from PIL import Image
 
 # ========================
 # CONFIG
 # ========================
 DB_NAME = "bot.db"
-CHANGELOG_CHANNEL_ID = 123456789012345678
 DM_DELAY = 2
 START_TIME = time.time()
+
+
+# ========================
+# IMAGE RESIZE HELPER
+# ========================
+def resize_emoji(image_bytes: bytes) -> bytes:
+    with Image.open(BytesIO(image_bytes)) as img:
+        img = img.convert("RGBA")
+        img.thumbnail((128, 128))
+        buffer = BytesIO()
+        img.save(buffer, format="PNG")
+        buffer.seek(0)
+        return buffer.read()
 
 
 # ========================
@@ -49,7 +61,6 @@ class SelfRoleButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         member = interaction.user
-
         if self.role in member.roles:
             await member.remove_roles(self.role)
             await interaction.response.send_message(
@@ -70,23 +81,6 @@ class SelfRoleView(discord.ui.View):
 
 
 # ========================
-# GIVEAWAY VIEW
-# ========================
-class GiveawayView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.participants = set()
-
-    @discord.ui.button(label="Join Giveaway", style=discord.ButtonStyle.green, emoji="🎉")
-    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id in self.participants:
-            return await interaction.response.send_message("❌ Already joined!", ephemeral=True)
-
-        self.participants.add(interaction.user.id)
-        await interaction.response.send_message("✅ Joined giveaway!", ephemeral=True)
-
-
-# ========================
 # ADMIN COG
 # ========================
 class Admin(commands.Cog):
@@ -99,16 +93,10 @@ class Admin(commands.Cog):
         self.auto_delete_dms.cancel()
 
     # ========================
-    # DATABASE SETUP
+    # DATABASE
     # ========================
     async def setup_db(self):
         async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-            CREATE TABLE IF NOT EXISTS premium (
-                user_id INTEGER PRIMARY KEY,
-                tier TEXT
-            )
-            """)
             await db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -117,9 +105,6 @@ class Admin(commands.Cog):
             """)
             await db.commit()
 
-    # ========================
-    # SETTINGS CHECK
-    # ========================
     async def is_dm_autoclean_enabled(self):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute(
@@ -134,7 +119,6 @@ class Admin(commands.Cog):
     @tasks.loop(hours=1)
     async def auto_delete_dms(self):
         await self.bot.wait_until_ready()
-
         if not await self.is_dm_autoclean_enabled():
             return
 
@@ -147,29 +131,6 @@ class Admin(commands.Cog):
                             await asyncio.sleep(1)
                 except:
                     pass
-
-    # ========================
-    # TOGGLE COMMAND
-    # ========================
-    @app_commands.command(name="dm_autoclean")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def dm_autoclean(self, interaction: discord.Interaction, state: str):
-        state = state.lower()
-
-        if state not in ["on", "off"]:
-            return await interaction.response.send_message("❌ Use `on` or `off`", ephemeral=True)
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES ('dm_autoclean', ?)",
-                (state,)
-            )
-            await db.commit()
-
-        await interaction.response.send_message(
-            f"🧹 DM Auto Cleanup is now **{state.upper()}**",
-            ephemeral=True
-        )
 
     # ========================
     # BASIC COMMANDS
@@ -201,13 +162,11 @@ class Admin(commands.Cog):
     @app_commands.command(name="botinfo")
     async def botinfo(self, interaction: discord.Interaction):
         uptime = int(time.time() - START_TIME)
-
         embed = discord.Embed(title="🤖 Bot Info", color=discord.Color.blue())
         embed.add_field(name="Servers", value=len(self.bot.guilds))
         embed.add_field(name="Users", value=len(self.bot.users))
         embed.add_field(name="Latency", value=f"{round(self.bot.latency*1000)}ms")
         embed.add_field(name="Uptime", value=f"{uptime//3600}h {(uptime%3600)//60}m")
-
         await interaction.response.send_message(embed=embed)
 
     # ========================
@@ -245,8 +204,67 @@ class Admin(commands.Cog):
         view = ConfirmView(send_bulk)
         await interaction.response.send_message("Confirm DM All?", embed=embed, view=view, ephemeral=True)
 
+    @app_commands.command(name="cleardm")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def cleardm(self, interaction: discord.Interaction, user: discord.User):
+        await interaction.response.defer(ephemeral=True)
+
+        async def clear_messages():
+            channel = await user.create_dm()
+            deleted = 0
+            async for msg in channel.history(limit=200):
+                if msg.author == self.bot.user:
+                    await msg.delete()
+                    deleted += 1
+                    await asyncio.sleep(1)
+            await interaction.followup.send(f"🧹 Deleted {deleted} messages", ephemeral=True)
+
+        view = ConfirmView(clear_messages)
+        await interaction.followup.send("Confirm DM clear?", view=view, ephemeral=True)
+
+    @app_commands.command(name="cleardm_all")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def cleardm_all(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        async def clear_all():
+            total = 0
+            for channel in self.bot.private_channels:
+                if isinstance(channel, discord.DMChannel):
+                    async for msg in channel.history(limit=200):
+                        if msg.author == self.bot.user:
+                            await msg.delete()
+                            total += 1
+                            await asyncio.sleep(1)
+            await interaction.followup.send(f"🧹 Deleted {total} messages", ephemeral=True)
+
+        view = ConfirmView(clear_all)
+        await interaction.followup.send("Confirm clear all DMs?", view=view, ephemeral=True)
+
     # ========================
-    # SELF ROLE
+    # ADD EMOJI
+    # ========================
+    @app_commands.command(name="addemoji")
+    @app_commands.checks.has_permissions(manage_emojis=True)
+    async def addemoji(self, interaction: discord.Interaction, name: str, emojiurl: str = None, file: discord.Attachment = None):
+        await interaction.response.defer(ephemeral=True)
+
+        if not emojiurl and not file:
+            return await interaction.followup.send("❌ Provide emoji URL or file.", ephemeral=True)
+
+        if emojiurl:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(emojiurl) as resp:
+                    image_bytes = await resp.read()
+        else:
+            image_bytes = await file.read()
+
+        image_bytes = resize_emoji(image_bytes)
+        emoji = await interaction.guild.create_custom_emoji(name=name, image=image_bytes)
+        await interaction.followup.send(f"✅ Emoji added: {emoji}", ephemeral=True)
+
+    # ========================
+    # SERVER TOOLS
     # ========================
     @app_commands.command(name="selfrole")
     @app_commands.checks.has_permissions(administrator=True)
@@ -254,15 +272,12 @@ class Admin(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         pairs = []
-        try:
-            for item in roles.split(","):
-                role_part, emoji = item.split(":")
-                role_id = int(role_part.replace("<@&", "").replace(">", ""))
-                role = interaction.guild.get_role(role_id)
-                if role:
-                    pairs.append((role, emoji))
-        except:
-            return await interaction.followup.send("❌ Format error! Use: @Role:emoji,@Role2:emoji", ephemeral=True)
+        for item in roles.split(","):
+            role_part, emoji = item.split(":")
+            role_id = int(role_part.replace("<@&", "").replace(">", ""))
+            role = interaction.guild.get_role(role_id)
+            if role:
+                pairs.append((role, emoji))
 
         embed = discord.Embed(title=title, description=description)
         if imageurl:
@@ -272,9 +287,6 @@ class Admin(commands.Cog):
         await channel.send(embed=embed, view=view)
         await interaction.followup.send("✅ Self role panel created!", ephemeral=True)
 
-    # ========================
-    # CLEAR + DELETE + RESTART
-    # ========================
     @app_commands.command(name="clear")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def clear(self, interaction: discord.Interaction, amount: int):
