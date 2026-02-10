@@ -189,7 +189,7 @@ class TruckersMPEvents(commands.Cog):
     # -----------------------------------------------------
     # REMINDER LOOP (IST 7 AM)
     # -----------------------------------------------------
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=3)
     async def reminder_loop(self):
         now_ist = datetime.now(IST)
 
