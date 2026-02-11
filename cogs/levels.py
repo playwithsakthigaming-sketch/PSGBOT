@@ -21,12 +21,6 @@ PREMIUM_BOOST = {
     "gold": 2.0
 }
 
-PREMIUM_ANIMATED = {
-    "bronze": "assets/bronze_levelup.gif",
-    "silver": "assets/silver_levelup.gif",
-    "gold": "assets/gold_levelup.gif"
-}
-
 LEVEL_ROLES = {
     5: 1464425870675411064,
     10: 222222222222222222,
@@ -56,24 +50,6 @@ async def get_xp_boost(user_id):
         return 1.0
 
     return PREMIUM_BOOST.get(tier, 1.0)
-
-
-async def get_premium_tier(user_id):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cur = await db.execute(
-            "SELECT tier, expires FROM premium WHERE user_id=?",
-            (user_id,)
-        )
-        row = await cur.fetchone()
-
-    if not row:
-        return None
-
-    tier, expires = row
-    if expires < int(time.time()):
-        return None
-
-    return tier
 
 
 # ================= RANK CARD =================
@@ -163,6 +139,8 @@ class Levels(commands.Cog):
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
+        if not message.guild:
+            return
 
         user_id = message.author.id
         guild_id = message.guild.id
@@ -188,10 +166,13 @@ class Levels(commands.Cog):
             xp += int(XP_PER_MESSAGE * boost)
 
             coins = 0
+            leveled_up = False
+
             while xp >= xp_needed(level):
                 xp -= xp_needed(level)
                 level += 1
                 coins += level * COINS_PER_LEVEL
+                leveled_up = True
 
             await db.execute(
                 "UPDATE levels SET xp=?, level=? WHERE user_id=? AND guild_id=?",
@@ -210,9 +191,65 @@ class Levels(commands.Cog):
 
             await db.commit()
 
-        if coins > 0:
+        if leveled_up:
             await self.apply_level_roles(message.author, level)
             await self.send_levelup_effect(message.author, level, xp, coins)
+
+    # ---------------- VOICE XP LOOP ----------------
+    @tasks.loop(minutes=1)
+    async def voice_xp_loop(self):
+        for guild in self.bot.guilds:
+            for vc in guild.voice_channels:
+                for member in vc.members:
+                    if member.bot:
+                        continue
+
+                    boost = await get_xp_boost(member.id)
+                    xp_gain = int(VOICE_XP_PER_MIN * boost)
+
+                    async with aiosqlite.connect(DB_NAME) as db:
+                        cur = await db.execute(
+                            "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
+                            (member.id, guild.id)
+                        )
+                        row = await cur.fetchone()
+
+                        if not row:
+                            xp = 0
+                            level = 1
+                        else:
+                            xp, level = row
+
+                        xp += xp_gain
+                        coins = 0
+                        leveled_up = False
+
+                        while xp >= xp_needed(level):
+                            xp -= xp_needed(level)
+                            level += 1
+                            coins += level * COINS_PER_LEVEL
+                            leveled_up = True
+
+                        await db.execute(
+                            "INSERT OR REPLACE INTO levels (user_id, guild_id, xp, level) VALUES (?,?,?,?)",
+                            (member.id, guild.id, xp, level)
+                        )
+
+                        if coins > 0:
+                            await db.execute(
+                                "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?,0)",
+                                (member.id,)
+                            )
+                            await db.execute(
+                                "UPDATE coins SET balance = balance + ? WHERE user_id=?",
+                                (coins, member.id)
+                            )
+
+                        await db.commit()
+
+                    if leveled_up:
+                        await self.apply_level_roles(member, level)
+                        await self.send_levelup_effect(member, level, xp, coins)
 
     # ---------------- LEVEL-UP MESSAGE ----------------
     async def send_levelup_effect(self, member, level, xp, coins):
@@ -250,6 +287,11 @@ class Levels(commands.Cog):
                 )
 
             xp, level = row
+
+            await db.execute(
+                "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?,0)",
+                (user_id,)
+            )
 
             cur = await db.execute(
                 "SELECT balance FROM coins WHERE user_id=?",
