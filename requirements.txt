@@ -10,3 +10,4 @@ gTTS
 langdetect
 beautifulsoup4
 aiohttp
+flask
