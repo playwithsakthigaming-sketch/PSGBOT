@@ -33,17 +33,26 @@ class LinkStorage(commands.Cog):
     # ===============================
     async def upload_to_server(self, file: discord.Attachment):
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
                 data = aiohttp.FormData()
                 file_bytes = await file.read()
                 data.add_field("file", file_bytes, filename=file.filename)
 
                 async with session.post(UPLOAD_API, data=data) as resp:
+                    text = await resp.text()
+                    print("Upload status:", resp.status)
+                    print("Upload response:", text)
+
                     if resp.status != 200:
                         return None
+
                     result = await resp.json()
                     return result.get("url")
-        except:
+
+        except Exception as e:
+            print("Upload error:", e)
             return None
 
     # ===============================
@@ -75,7 +84,7 @@ class LinkStorage(commands.Cog):
             uploaded_url = await self.upload_to_server(file)
             if not uploaded_url:
                 return await interaction.followup.send(
-                    "❌ File upload failed."
+                    "❌ File upload failed. Check server logs."
                 )
             url = uploaded_url
 
