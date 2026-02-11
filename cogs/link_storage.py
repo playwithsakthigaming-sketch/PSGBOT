@@ -32,16 +32,19 @@ class LinkStorage(commands.Cog):
     # FILE UPLOAD
     # ===============================
     async def upload_to_server(self, file: discord.Attachment):
-        async with aiohttp.ClientSession() as session:
-            data = aiohttp.FormData()
-            file_bytes = await file.read()
-            data.add_field("file", file_bytes, filename=file.filename)
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = aiohttp.FormData()
+                file_bytes = await file.read()
+                data.add_field("file", file_bytes, filename=file.filename)
 
-            async with session.post(UPLOAD_API, data=data) as resp:
-                if resp.status != 200:
-                    return None
-                result = await resp.json()
-                return result.get("url")
+                async with session.post(UPLOAD_API, data=data) as resp:
+                    if resp.status != 200:
+                        return None
+                    result = await resp.json()
+                    return result.get("url")
+        except:
+            return None
 
     # ===============================
     # ADD LINK
@@ -59,19 +62,20 @@ class LinkStorage(commands.Cog):
         url: str = None,
         file: discord.Attachment = None
     ):
+        # Prevent Discord timeout
+        await interaction.response.defer(ephemeral=True)
+
         if not url and not file:
-            return await interaction.response.send_message(
-                "❌ Provide a URL or upload a file.",
-                ephemeral=True
+            return await interaction.followup.send(
+                "❌ Provide a URL or upload a file."
             )
 
         # Upload file if provided
         if file:
             uploaded_url = await self.upload_to_server(file)
             if not uploaded_url:
-                return await interaction.response.send_message(
-                    "❌ File upload failed.",
-                    ephemeral=True
+                return await interaction.followup.send(
+                    "❌ File upload failed."
                 )
             url = uploaded_url
 
@@ -82,9 +86,8 @@ class LinkStorage(commands.Cog):
             )
             await db.commit()
 
-        await interaction.response.send_message(
-            f"✅ **{name}** saved:\n{url}",
-            ephemeral=True
+        await interaction.followup.send(
+            f"✅ **{name}** saved:\n{url}"
         )
 
     # ===============================
