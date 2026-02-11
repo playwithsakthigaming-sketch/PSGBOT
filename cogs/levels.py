@@ -300,33 +300,46 @@ class Levels(commands.Cog):
             file=discord.File(card, "rank.png")
         )
 
-    # ---------------- /LEVEL ----------------
-    @app_commands.command(name="level", description="Check your level")
-    async def level_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
-        member = member or interaction.user
-        user_id = member.id
-        guild_id = interaction.guild.id
+# ---------------- /LEVEL ----------------
+@app_commands.command(name="level", description="Check your level")
+async def level_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+    member = member or interaction.user
+    user_id = member.id
+    guild_id = interaction.guild.id
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute(
-                "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
-                (user_id, guild_id)
-            )
-            row = await cur.fetchone()
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Get level data
+        cur = await db.execute(
+            "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
+            (user_id, guild_id)
+        )
+        row = await cur.fetchone()
 
         if not row:
-            return await interaction.response.send_message("No level data yet.", ephemeral=True)
+            return await interaction.response.send_message(
+                "No level data yet.", ephemeral=True
+            )
 
         xp, level = row
-        needed = xp_needed(level)
 
-        avatar = await member.display_avatar.read()
-        card = generate_rank_card(member.name, avatar, level, xp, needed, 0)
-
-        await interaction.response.send_message(
-            file=discord.File(card, "rank.png")
+        # Get coin balance
+        cur = await db.execute(
+            "SELECT balance FROM coins WHERE user_id=?",
+            (user_id,)
         )
+        coin_row = await cur.fetchone()
 
+        coins = coin_row[0] if coin_row else 0
+
+    needed = xp_needed(level)
+    avatar = await member.display_avatar.read()
+
+    card = generate_rank_card(member.name, avatar, level, xp, needed, coins)
+
+    await interaction.response.send_message(
+        file=discord.File(card, "rank.png")
+    )
+    
     # ---------------- /ADDXP ----------------
     @app_commands.command(name="addxp", description="Admin: Add XP to a user")
     @app_commands.checks.has_permissions(administrator=True)
