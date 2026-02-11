@@ -29,32 +29,33 @@ class LinkStorage(commands.Cog):
             await db.commit()
 
     # ===============================
-    # FILE UPLOAD
+    # FILE UPLOAD WITH CUSTOM NAME
     # ===============================
-async def upload_to_server(self, file: discord.Attachment, name: str):
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30)
-        ) as session:
-            data = aiohttp.FormData()
-            file_bytes = await file.read()
-            data.add_field("file", file_bytes, filename=file.filename)
-            data.add_field("name", name)  # send custom name
+    async def upload_to_server(self, file: discord.Attachment, name: str):
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as session:
+                data = aiohttp.FormData()
+                file_bytes = await file.read()
 
-            async with session.post(UPLOAD_API, data=data) as resp:
-                text = await resp.text()
-                print("Upload status:", resp.status)
-                print("Upload response:", text)
+                data.add_field("file", file_bytes, filename=file.filename)
+                data.add_field("name", name)  # send custom name
 
-                if resp.status != 200:
-                    return None
+                async with session.post(UPLOAD_API, data=data) as resp:
+                    text = await resp.text()
+                    print("Upload status:", resp.status)
+                    print("Upload response:", text)
 
-                result = await resp.json()
-                return result.get("url")
+                    if resp.status != 200:
+                        return None
 
-    except Exception as e:
-        print("Upload error:", e)
-        return None
+                    result = await resp.json()
+                    return result.get("url")
+
+        except Exception as e:
+            print("Upload error:", e)
+            return None
 
     # ===============================
     # ADD LINK
