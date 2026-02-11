@@ -1,78 +1,163 @@
-from flask import Flask, request, send_from_directory, jsonify, abort
-import os
-import uuid
+import discord
+from discord.ext import commands
+from discord import app_commands
+import aiosqlite
+import aiohttp
 
-app = Flask(__name__)
+DB_NAME = "links.db"
+UPLOAD_API = "https://files.psgfamily.online/upload"
+
+
+class LinkStorage(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        bot.loop.create_task(self.init_db())
+
+    # ===============================
+    # DATABASE
+    # ===============================
+    async def init_db(self):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER,
+                    name TEXT,
+                    url TEXT
+                )
+            """)
+            await db.commit()
+
+    # ===============================
+    # FILE UPLOAD
+    # ===============================
+    async def upload_to_server(self, file: discord.Attachment):
+        async with aiohttp.ClientSession() as session:
+            data = aiohttp.FormData()
+            file_bytes = await file.read()
+            data.add_field("file", file_bytes, filename=file.filename)
+
+            async with session.post(UPLOAD_API, data=data) as resp:
+                if resp.status != 200:
+                    return None
+                result = await resp.json()
+                return result.get("url")
+
+    # ===============================
+    # ADD LINK
+    # ===============================
+    @app_commands.command(name="addlink", description="Store a link or upload a file")
+    @app_commands.describe(
+        name="Name for the link",
+        url="Optional URL",
+        file="Optional file attachment"
+    )
+    async def addlink(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        url: str = None,
+        file: discord.Attachment = None
+    ):
+        if not url and not file:
+            return await interaction.response.send_message(
+                "❌ Provide a URL or upload a file.",
+                ephemeral=True
+            )
+
+        # Upload file if provided
+        if file:
+            uploaded_url = await self.upload_to_server(file)
+            if not uploaded_url:
+                return await interaction.response.send_message(
+                    "❌ File upload failed.",
+                    ephemeral=True
+                )
+            url = uploaded_url
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "INSERT INTO links (guild_id, name, url) VALUES (?, ?, ?)",
+                (interaction.guild_id, name, url)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            f"✅ **{name}** saved:\n{url}",
+            ephemeral=True
+        )
+
+    # ===============================
+    # LIST LINKS
+    # ===============================
+    @app_commands.command(name="links", description="Show stored links")
+    async def links(self, interaction: discord.Interaction):
+        async with aiosqlite.connect(DB_NAME) as db:
+            cursor = await db.execute(
+                "SELECT id, name, url FROM links WHERE guild_id=?",
+                (interaction.guild_id,)
+            )
+            rows = await cursor.fetchall()
+
+        if not rows:
+            return await interaction.response.send_message(
+                "No links stored.",
+                ephemeral=True
+            )
+
+        embed = discord.Embed(
+            title="Stored Links",
+            color=discord.Color.blue()
+        )
+
+        for link_id, name, url in rows:
+            embed.add_field(
+                name=f"{link_id}. {name}",
+                value=url,
+                inline=False
+            )
+
+        await interaction.response.send_message(embed=embed)
+
+    # ===============================
+    # REMOVE LINK
+    # ===============================
+    @app_commands.command(name="removelink", description="Remove a stored link")
+    @app_commands.describe(link_id="ID of the link to remove")
+    async def removelink(self, interaction: discord.Interaction, link_id: int):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "DELETE FROM links WHERE id=? AND guild_id=?",
+                (link_id, interaction.guild_id)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            "🗑️ Link removed.",
+            ephemeral=True
+        )
+
+    # ===============================
+    # CLEAR ALL LINKS
+    # ===============================
+    @app_commands.command(name="clearlinks", description="Remove all stored links")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def clearlinks(self, interaction: discord.Interaction):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "DELETE FROM links WHERE guild_id=?",
+                (interaction.guild_id,)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            "🗑️ All links cleared.",
+            ephemeral=True
+        )
+
 
 # ===============================
-# CONFIG
+# REQUIRED SETUP FUNCTION
 # ===============================
-UPLOAD_FOLDER = "uploads"
-BASE_URL = "https://files.psgfamily.online"
-MAX_FILE_SIZE_MB = 25  # max upload size
-
-app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE_MB * 1024 * 1024
-
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-
-# ===============================
-# HOME ROUTE (health check)
-# ===============================
-@app.route("/")
-def home():
-    return "File server running", 200
-
-
-# ===============================
-# UPLOAD ENDPOINT
-# ===============================
-@app.route("/upload", methods=["POST"])
-def upload():
-    if "file" not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    file = request.files["file"]
-
-    if file.filename == "":
-        return jsonify({"error": "Empty filename"}), 400
-
-    # Get file extension
-    if "." in file.filename:
-        ext = file.filename.rsplit(".", 1)[1].lower()
-    else:
-        ext = "dat"
-
-    # Generate random filename
-    filename = f"{uuid.uuid4().hex}.{ext}"
-    path = os.path.join(UPLOAD_FOLDER, filename)
-
-    try:
-        file.save(path)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-    return jsonify({
-        "url": f"{BASE_URL}/{filename}"
-    })
-
-
-# ===============================
-# SERVE FILES
-# ===============================
-@app.route("/<filename>")
-def serve_file(filename):
-    path = os.path.join(UPLOAD_FOLDER, filename)
-
-    if not os.path.exists(path):
-        abort(404)
-
-    return send_from_directory(UPLOAD_FOLDER, filename)
-
-
-# ===============================
-# MAIN (Railway-compatible port)
-# ===============================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))  # Railway uses this
-    app.run(host="0.0.0.0", port=port)
+async def setup(bot):
+    await bot.add_cog(LinkStorage(bot))
