@@ -39,7 +39,7 @@ def xp_needed(level: int):
     return 100 + (level * 50)
 
 
-# ================= PREMIUM BOOST =================
+# ================= PREMIUM HELPERS =================
 async def get_xp_boost(user_id):
     async with aiosqlite.connect(DB_NAME) as db:
         cur = await db.execute(
@@ -119,7 +119,6 @@ class Levels(commands.Cog):
         self.voice_xp_loop.start()
 
     async def cog_load(self):
-        """Create DB tables automatically"""
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS levels (
@@ -215,76 +214,6 @@ class Levels(commands.Cog):
             await self.apply_level_roles(message.author, level)
             await self.send_levelup_effect(message.author, level, xp, coins)
 
-    # ---------------- VOICE XP ----------------
-    @tasks.loop(minutes=1)
-    async def voice_xp_loop(self):
-        for guild in self.bot.guilds:
-            for vc in guild.voice_channels:
-
-                if len(vc.members) <= 1:
-                    continue
-
-                for member in vc.members:
-                    if member.bot:
-                        continue
-
-                    state = member.voice
-                    if not state:
-                        continue
-
-                    if state.self_mute or state.self_deaf or state.afk:
-                        continue
-
-                    user_id = member.id
-                    guild_id = guild.id
-
-                    async with aiosqlite.connect(DB_NAME) as db:
-                        cur = await db.execute(
-                            "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
-                            (user_id, guild_id)
-                        )
-                        row = await cur.fetchone()
-
-                        if not row:
-                            xp = 0
-                            level = 1
-                        else:
-                            xp, level = row
-
-                        boost = await get_xp_boost(user_id)
-                        xp += int(VOICE_XP_PER_MIN * boost)
-
-                        coins = 0
-                        while xp >= xp_needed(level):
-                            xp -= xp_needed(level)
-                            level += 1
-                            coins += level * COINS_PER_LEVEL
-
-                        await db.execute(
-                            "INSERT OR REPLACE INTO levels (user_id, guild_id, xp, level) VALUES (?,?,?,?)",
-                            (user_id, guild_id, xp, level)
-                        )
-
-                        if coins > 0:
-                            await db.execute(
-                                "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?,0)",
-                                (user_id,)
-                            )
-                            await db.execute(
-                                "UPDATE coins SET balance = balance + ? WHERE user_id=?",
-                                (coins, user_id)
-                            )
-
-                        await db.commit()
-
-                    if coins > 0:
-                        await self.apply_level_roles(member, level)
-                        await self.send_levelup_effect(member, level, xp, coins)
-
-    @voice_xp_loop.before_loop
-    async def before_voice_loop(self):
-        await self.bot.wait_until_ready()
-
     # ---------------- LEVEL-UP MESSAGE ----------------
     async def send_levelup_effect(self, member, level, xp, coins):
         channel = member.guild.get_channel(LEVEL_UP_CHANNEL_ID)
@@ -294,29 +223,7 @@ class Levels(commands.Cog):
         avatar = await member.display_avatar.read()
         needed = xp_needed(level)
 
-        card = generate_rank_card(
-            member.name,
-            avatar,
-            level,
-            xp,
-            needed,
-            coins
-        )
-
-        tier = await get_premium_tier(member.id)
-
-        if tier and tier in PREMIUM_ANIMATED:
-            try:
-                await channel.send(
-                    content=f"🎉 {member.mention} leveled up to **Level {level}**!",
-                    files=[
-                        discord.File(card, "rank.png"),
-                        discord.File(PREMIUM_ANIMATED[tier], "effect.gif")
-                    ]
-                )
-                return
-            except:
-                pass
+        card = generate_rank_card(member.name, avatar, level, xp, needed, coins)
 
         await channel.send(
             content=f"🎉 {member.mention} leveled up to **Level {level}**!",
@@ -349,7 +256,6 @@ class Levels(commands.Cog):
                 (user_id,)
             )
             coin_row = await cur.fetchone()
-
             coins = coin_row[0] if coin_row else 0
 
         needed = xp_needed(level)
@@ -357,7 +263,8 @@ class Levels(commands.Cog):
         card = generate_rank_card(member.name, avatar, level, xp, needed, coins)
 
         await interaction.response.send_message(
-            file=discord.File(card, "rank.png")
+            file=discord.File(card, "rank.png"),
+            ephemeral=True
         )
 
     # ---------------- /ADDXP ----------------
@@ -382,21 +289,38 @@ class Levels(commands.Cog):
 
             xp += amount
             coins = 0
+            leveled_up = False
 
             while xp >= xp_needed(level):
                 xp -= xp_needed(level)
                 level += 1
                 coins += level * COINS_PER_LEVEL
+                leveled_up = True
 
             await db.execute(
                 "INSERT OR REPLACE INTO levels (user_id, guild_id, xp, level) VALUES (?,?,?,?)",
                 (user_id, guild_id, xp, level)
             )
 
+            if coins > 0:
+                await db.execute(
+                    "INSERT OR IGNORE INTO coins (user_id, balance) VALUES (?,0)",
+                    (user_id,)
+                )
+                await db.execute(
+                    "UPDATE coins SET balance = balance + ? WHERE user_id=?",
+                    (coins, user_id)
+                )
+
             await db.commit()
 
+        if leveled_up:
+            await self.apply_level_roles(member, level)
+            await self.send_levelup_effect(member, level, xp, coins)
+
         await interaction.response.send_message(
-            f"✅ Added {amount} XP to {member.mention}"
+            f"✅ Added **{amount} XP** to {member.mention}",
+            ephemeral=True
         )
 
 
