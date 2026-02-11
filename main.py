@@ -97,7 +97,7 @@ async def on_ready():
 
 
 # =========================================================
-# FLASK FILE SERVER (for Railway)
+# FLASK FILE SERVER (Railway-compatible)
 # =========================================================
 from flask import Flask, request, send_from_directory, jsonify, abort
 import uuid
@@ -144,7 +144,8 @@ def serve_file(filename):
 
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🌐 Starting file server on port {port}")
     app.run(host="0.0.0.0", port=port)
 
 
@@ -156,8 +157,8 @@ async def main():
     if not token:
         raise RuntimeError("❌ DISCORD_TOKEN missing in .env")
 
-    # Start Flask server in background thread
-    flask_thread = threading.Thread(target=run_flask)
+    # Start Flask server in background
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
     await bot.start(token)
