@@ -120,14 +120,22 @@ def upload():
         return jsonify({"error": "No file provided"}), 400
 
     file = request.files["file"]
+    name = request.form.get("name")  # custom name from bot
 
     if file.filename == "":
         return jsonify({"error": "Empty filename"}), 400
 
+    # Get extension
     ext = file.filename.split(".")[-1].lower()
-    filename = f"{uuid.uuid4().hex}.{ext}"
-    path = os.path.join(UPLOAD_FOLDER, filename)
 
+    # Use custom name if provided
+    if name:
+        safe_name = "".join(c for c in name if c.isalnum() or c in "-_")
+        filename = f"{safe_name}.{ext}"
+    else:
+        filename = f"{uuid.uuid4().hex}.{ext}"
+
+    path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(path)
 
     return jsonify({
