@@ -13,24 +13,20 @@ XP_PER_MESSAGE = 8
 VOICE_XP_PER_MIN = 9
 COINS_PER_LEVEL = 10
 
-# Level-up messages go only here
-LEVEL_UP_CHANNEL_ID = 1415142396341256275  # change this
+LEVEL_UP_CHANNEL_ID = 1415142396341256275
 
-# Premium XP boost
 PREMIUM_BOOST = {
     "bronze": 1.2,
     "silver": 1.5,
     "gold": 2.0
 }
 
-# Premium level-up effects
 PREMIUM_ANIMATED = {
     "bronze": "assets/bronze_levelup.gif",
     "silver": "assets/silver_levelup.gif",
     "gold": "assets/gold_levelup.gif"
 }
 
-# Level roles
 LEVEL_ROLES = {
     5: 1464425870675411064,
     10: 222222222222222222,
@@ -98,7 +94,7 @@ def generate_rank_card(username, avatar_bytes, level, xp, needed, coins):
 
     draw.text((220, 40), username, font=name_font, fill="white")
     draw.text((220, 120), f"LEVEL {level}", font=level_font, fill="gold")
-    draw.text((220, 160), f"+{coins} COINS", font=level_font, fill=(0, 255, 200))
+    draw.text((220, 160), f"{coins} COINS", font=level_font, fill=(0, 255, 200))
     draw.text((220, 210), f"XP: {xp} / {needed}", font=small_font, fill="white")
 
     bar_x = 220
@@ -121,6 +117,33 @@ class Levels(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.voice_xp_loop.start()
+
+    async def cog_load(self):
+        """Create DB tables automatically"""
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS levels (
+                    user_id INTEGER,
+                    guild_id INTEGER,
+                    xp INTEGER,
+                    level INTEGER,
+                    PRIMARY KEY (user_id, guild_id)
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS coins (
+                    user_id INTEGER PRIMARY KEY,
+                    balance INTEGER DEFAULT 0
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS premium (
+                    user_id INTEGER PRIMARY KEY,
+                    tier TEXT,
+                    expires INTEGER
+                )
+            """)
+            await db.commit()
 
     # ---------------- APPLY LEVEL ROLES ----------------
     async def apply_level_roles(self, member: discord.Member, level: int):
@@ -192,7 +215,7 @@ class Levels(commands.Cog):
             await self.apply_level_roles(message.author, level)
             await self.send_levelup_effect(message.author, level, xp, coins)
 
-    # ---------------- VOICE XP WITH AFK DETECTION ----------------
+    # ---------------- VOICE XP ----------------
     @tasks.loop(minutes=1)
     async def voice_xp_loop(self):
         for guild in self.bot.guilds:
@@ -300,46 +323,43 @@ class Levels(commands.Cog):
             file=discord.File(card, "rank.png")
         )
 
-# ---------------- /LEVEL ----------------
-@app_commands.command(name="level", description="Check your level")
-async def level_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
-    member = member or interaction.user
-    user_id = member.id
-    guild_id = interaction.guild.id
+    # ---------------- /LEVEL ----------------
+    @app_commands.command(name="level", description="Check your level")
+    async def level_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+        member = member or interaction.user
+        user_id = member.id
+        guild_id = interaction.guild.id
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        # Get level data
-        cur = await db.execute(
-            "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
-            (user_id, guild_id)
-        )
-        row = await cur.fetchone()
-
-        if not row:
-            return await interaction.response.send_message(
-                "No level data yet.", ephemeral=True
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT xp, level FROM levels WHERE user_id=? AND guild_id=?",
+                (user_id, guild_id)
             )
+            row = await cur.fetchone()
 
-        xp, level = row
+            if not row:
+                return await interaction.response.send_message(
+                    "No level data yet.", ephemeral=True
+                )
 
-        # Get coin balance
-        cur = await db.execute(
-            "SELECT balance FROM coins WHERE user_id=?",
-            (user_id,)
+            xp, level = row
+
+            cur = await db.execute(
+                "SELECT balance FROM coins WHERE user_id=?",
+                (user_id,)
+            )
+            coin_row = await cur.fetchone()
+
+            coins = coin_row[0] if coin_row else 0
+
+        needed = xp_needed(level)
+        avatar = await member.display_avatar.read()
+        card = generate_rank_card(member.name, avatar, level, xp, needed, coins)
+
+        await interaction.response.send_message(
+            file=discord.File(card, "rank.png")
         )
-        coin_row = await cur.fetchone()
 
-        coins = coin_row[0] if coin_row else 0
-
-    needed = xp_needed(level)
-    avatar = await member.display_avatar.read()
-
-    card = generate_rank_card(member.name, avatar, level, xp, needed, coins)
-
-    await interaction.response.send_message(
-        file=discord.File(card, "rank.png")
-    )
-    
     # ---------------- /ADDXP ----------------
     @app_commands.command(name="addxp", description="Admin: Add XP to a user")
     @app_commands.checks.has_permissions(administrator=True)
