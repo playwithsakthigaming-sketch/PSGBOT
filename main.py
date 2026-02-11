@@ -34,6 +34,7 @@ COGS = [
     "cogs.announce",
     "cogs.help",
     "cogs.moderation",
+    "cogs.link_storage",
     "cogs.birthday",
     "cogs.coupons",
     "cogs.backup",
