@@ -31,29 +31,30 @@ class LinkStorage(commands.Cog):
     # ===============================
     # FILE UPLOAD
     # ===============================
-    async def upload_to_server(self, file: discord.Attachment):
-        try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                data = aiohttp.FormData()
-                file_bytes = await file.read()
-                data.add_field("file", file_bytes, filename=file.filename)
+async def upload_to_server(self, file: discord.Attachment, name: str):
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as session:
+            data = aiohttp.FormData()
+            file_bytes = await file.read()
+            data.add_field("file", file_bytes, filename=file.filename)
+            data.add_field("name", name)  # send custom name
 
-                async with session.post(UPLOAD_API, data=data) as resp:
-                    text = await resp.text()
-                    print("Upload status:", resp.status)
-                    print("Upload response:", text)
+            async with session.post(UPLOAD_API, data=data) as resp:
+                text = await resp.text()
+                print("Upload status:", resp.status)
+                print("Upload response:", text)
 
-                    if resp.status != 200:
-                        return None
+                if resp.status != 200:
+                    return None
 
-                    result = await resp.json()
-                    return result.get("url")
+                result = await resp.json()
+                return result.get("url")
 
-        except Exception as e:
-            print("Upload error:", e)
-            return None
+    except Exception as e:
+        print("Upload error:", e)
+        return None
 
     # ===============================
     # ADD LINK
@@ -81,7 +82,7 @@ class LinkStorage(commands.Cog):
 
         # Upload file if provided
         if file:
-            uploaded_url = await self.upload_to_server(file)
+            uploaded_url = await self.upload_to_server(file, name)
             if not uploaded_url:
                 return await interaction.followup.send(
                     "❌ File upload failed. Check server logs."
