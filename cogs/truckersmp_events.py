@@ -8,6 +8,9 @@ from discord import app_commands
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+# =========================
+# LOAD ENV
+# =========================
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -58,7 +61,7 @@ async def fetch_route_image(event_url: str) -> str | None:
                 html = await res.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # Normal <img>
+                # Method 1: Normal <img>
                 for header in soup.find_all(["h2", "h3", "h4"]):
                     if "route" in header.text.lower():
                         section = header.find_next("div")
@@ -70,14 +73,14 @@ async def fetch_route_image(event_url: str) -> str | None:
                                     return "https://truckersmp.com" + src
                                 return src
 
-                # Markdown ![](url)
+                # Method 2: Markdown image
                 text = soup.get_text()
                 match = re.search(r'!\[\]\((https?://[^\)]+)\)', text)
                 if match:
                     return match.group(1)
 
-    except:
-        pass
+    except Exception as e:
+        print("Route image error:", e)
 
     return None
 
@@ -137,6 +140,13 @@ class TruckersMPEvents(commands.Cog):
     # /event
     # -----------------------------------------------------
     @app_commands.command(name="event", description="Post a TruckersMP event")
+    @app_commands.describe(
+        event="Event URL or ID",
+        channel="Channel to send event",
+        role="Role to mention",
+        slot_number="Slot number",
+        slot_image="Slot image URL (optional)"
+    )
     async def event(
         self,
         interaction: discord.Interaction,
@@ -196,8 +206,20 @@ class TruckersMPEvents(commands.Cog):
         await interaction.followup.send("✅ Event posted and saved.")
 
     # -----------------------------------------------------
-    # CALENDAR
+    # /calendar
     # -----------------------------------------------------
+    @app_commands.command(name="calendar", description="Create event calendar")
+    async def calendar(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await interaction.response.defer()
+
+        embed = await self.build_calendar_embed()
+        msg = await channel.send(embed=embed)
+
+        self.calendar_channel_id = channel.id
+        self.calendar_message_id = msg.id
+
+        await interaction.followup.send("📅 Calendar created and auto-refresh enabled.")
+
     async def build_calendar_embed(self):
         embed = discord.Embed(title="📅 Event Calendar", color=discord.Color.orange())
         rows = await self.fetch_events()
@@ -253,7 +275,12 @@ class TruckersMPEvents(commands.Cog):
 
                 if now_ist.date() == event_day and now_ist.hour == 7:
                     guild = self.bot.get_guild(guild_id)
+                    if not guild:
+                        continue
+
                     role = guild.get_role(role_id)
+                    if not role:
+                        continue
 
                     for member in role.members:
                         try:
@@ -282,6 +309,10 @@ class TruckersMPEvents(commands.Cog):
             except:
                 continue
 
+
+# =========================================================
+# SETUP
+# =========================================================
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TruckersMPEvents(bot))
