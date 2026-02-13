@@ -61,7 +61,9 @@ async def fetch_route_image(event_url: str) -> str | None:
                 html = await res.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # Method 1: Normal <img>
+                # -----------------------------
+                # METHOD 1: Normal <img> tag
+                # -----------------------------
                 for header in soup.find_all(["h2", "h3", "h4"]):
                     if "route" in header.text.lower():
                         section = header.find_next("div")
@@ -73,9 +75,18 @@ async def fetch_route_image(event_url: str) -> str | None:
                                     return "https://truckersmp.com" + src
                                 return src
 
-                # Method 2: Markdown image
-                text = soup.get_text()
-                match = re.search(r'!\[\]\((https?://[^\)]+)\)', text)
+                # -----------------------------
+                # METHOD 2: Markdown in raw HTML
+                # -----------------------------
+                # Search entire HTML instead of text only
+                match = re.search(r'!\[[^\]]*\]\((https?://[^\)]+)\)', html)
+                if match:
+                    return match.group(1)
+
+                # -----------------------------
+                # METHOD 3: Broken format ![]url
+                # -----------------------------
+                match = re.search(r'!\[\](https?://\S+)', html)
                 if match:
                     return match.group(1)
 
