@@ -72,29 +72,34 @@ async def fetch_route_image(event_url: str) -> str | None:
                             if img and img.get("src"):
                                 src = img["src"]
                                 if src.startswith("/"):
-                                    return "https://truckersmp.com" + src
-                                return src
+                                    src = "https://truckersmp.com" + src
+                                return fix_imgur(src)
 
                 # -----------------------------
-                # METHOD 2: Markdown in raw HTML
+                # METHOD 2: Markdown images
                 # -----------------------------
-                # Search entire HTML instead of text only
                 match = re.search(r'!\[[^\]]*\]\((https?://[^\)]+)\)', html)
                 if match:
-                    return match.group(1)
+                    return fix_imgur(match.group(1))
 
-                # -----------------------------
-                # METHOD 3: Broken format ![]url
-                # -----------------------------
+                # Broken format
                 match = re.search(r'!\[\](https?://\S+)', html)
                 if match:
-                    return match.group(1)
+                    return fix_imgur(match.group(1))
 
     except Exception as e:
         print("Route image error:", e)
 
     return None
 
+
+# =============================
+# IMGUR FIX
+# =============================
+def fix_imgur(url: str) -> str:
+    if "imgur.com" in url and "i.imgur.com" not in url:
+        url = url.replace("imgur.com", "i.imgur.com")
+    return url
 
 # =========================================================
 # COG
