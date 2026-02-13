@@ -7,6 +7,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from collections import defaultdict
 
 # =========================
 # LOAD ENV
@@ -101,6 +102,7 @@ def fix_imgur(url: str) -> str:
         url = url.replace("imgur.com", "i.imgur.com")
     return url
 
+
 # =========================================================
 # COG
 # =========================================================
@@ -110,24 +112,27 @@ class TruckersMPEvents(commands.Cog):
         self.bot = bot
         self.calendar_message_id = None
         self.calendar_channel_id = None
-        self.reminder_loop.start()
+        self.last_events_channel_id = None
         self.calendar_loop.start()
         self.cleanup_loop.start()
 
     def cog_unload(self):
-        self.reminder_loop.cancel()
         self.calendar_loop.cancel()
         self.cleanup_loop.cancel()
 
     # -----------------------------------------------------
     # SUPABASE HELPERS
     # -----------------------------------------------------
-    async def insert_event(self, event_id, guild_id, role_id, event_date):
+    async def insert_event(self, event_id, guild_id, role_id, event_date, title, time, server, slot):
         payload = {
             "event_id": event_id,
             "guild_id": guild_id,
             "role_id": role_id,
-            "event_date": event_date
+            "event_date": event_date,
+            "title": title,
+            "time": time,
+            "server": server,
+            "slot": slot
         }
 
         async with aiohttp.ClientSession() as session:
@@ -140,7 +145,7 @@ class TruckersMPEvents(commands.Cog):
     async def fetch_events(self):
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f"{SUPABASE_URL}/rest/v1/events",
+                f"{SUPABASE_URL}/rest/v1/events?order=event_date.asc",
                 headers=HEADERS
             ) as res:
                 return await res.json()
@@ -156,13 +161,6 @@ class TruckersMPEvents(commands.Cog):
     # /event
     # -----------------------------------------------------
     @app_commands.command(name="event", description="Post a TruckersMP event")
-    @app_commands.describe(
-        event="Event URL or ID",
-        channel="Channel to send event",
-        role="Role to mention",
-        slot_number="Slot number",
-        slot_image="Slot image URL (optional)"
-    )
     async def event(
         self,
         interaction: discord.Interaction,
@@ -170,7 +168,6 @@ class TruckersMPEvents(commands.Cog):
         channel: discord.TextChannel,
         role: discord.Role,
         slot_number: int,
-        slot_image: str | None = None
     ):
         await interaction.response.defer()
 
@@ -183,43 +180,46 @@ class TruckersMPEvents(commands.Cog):
             return await interaction.followup.send("❌ Event not found.")
 
         title = data["name"]
-        description = data["description"][:1000]
         start_time = data["start_at"]
         server = data["server"]["name"]
-        banner = data.get("banner")
         url = f"https://truckersmp.com/events/{event_id}"
 
         dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST)
         event_date = dt_ist.strftime("%Y-%m-%d")
+        time_str = dt_ist.strftime("%H:%M")
 
-        route_image = await fetch_route_image(url)
-
-        embed = discord.Embed(title=title, url=url, description=description)
-        embed.add_field(name="Server", value=server)
+        # -------------------------
+        # Upcoming event embed
+        # -------------------------
+        embed = discord.Embed(
+            title="🚚 Upcoming Event",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Event", value=title, inline=False)
         embed.add_field(name="Date", value=dt_ist.strftime("%d %b %Y"))
-        embed.add_field(name="Time", value=dt_ist.strftime("%H:%M"))
-
-        if banner:
-            embed.set_image(url=banner)
+        embed.add_field(name="Time", value=time_str)
+        embed.add_field(name="Server", value=server)
+        embed.add_field(name="Slot", value=str(slot_number))
+        embed.url = url
 
         await channel.send(role.mention)
         await channel.send(embed=embed)
 
-        if route_image:
-            route_embed = discord.Embed(title="🗺 Route")
-            route_embed.set_image(url=route_image)
-            await channel.send(embed=route_embed)
+        await self.insert_event(
+            event_id,
+            interaction.guild.id,
+            role.id,
+            event_date,
+            title,
+            time_str,
+            server,
+            slot_number
+        )
 
-        slot_embed = discord.Embed(title="🚚 Slot Info")
-        slot_embed.add_field(name="Slot", value=str(slot_number))
-        if slot_image:
-            slot_embed.set_image(url=slot_image)
+        await interaction.followup.send("✅ Event posted.")
 
-        await channel.send(embed=slot_embed)
-
-        await self.insert_event(event_id, interaction.guild.id, role.id, event_date)
-        await interaction.followup.send("✅ Event posted and saved.")
+        await self.post_last_two_events()
 
     # -----------------------------------------------------
     # /calendar
@@ -234,7 +234,7 @@ class TruckersMPEvents(commands.Cog):
         self.calendar_channel_id = channel.id
         self.calendar_message_id = msg.id
 
-        await interaction.followup.send("📅 Calendar created and auto-refresh enabled.")
+        await interaction.followup.send("📅 Calendar created.")
 
     async def build_calendar_embed(self):
         embed = discord.Embed(title="📅 Event Calendar", color=discord.Color.orange())
@@ -244,17 +244,66 @@ class TruckersMPEvents(commands.Cog):
             embed.description = "No upcoming events."
             return embed
 
-        lines = []
-        for row in rows:
-            event_id = row["event_id"]
-            event_date = row["event_date"]
-            dt = datetime.strptime(event_date, "%Y-%m-%d")
-            formatted = dt.strftime("%d %b %Y")
-            url = f"https://truckersmp.com/events/{event_id}"
-            lines.append(f"**{formatted}** → [Event Link]({url})")
+        grouped = defaultdict(list)
 
-        embed.description = "\n".join(lines)
+        for row in rows:
+            dt = datetime.strptime(row["event_date"], "%Y-%m-%d")
+            month_key = dt.strftime("%B %Y")
+            grouped[month_key].append(row)
+
+        desc = ""
+        for month, events in grouped.items():
+            desc += f"**{month}**\n"
+            for e in events:
+                dt = datetime.strptime(e["event_date"], "%Y-%m-%d")
+                desc += f"{dt.strftime('%d %b')} – {e['title']}\n"
+            desc += "\n"
+
+        embed.description = desc
         return embed
+
+    # -----------------------------------------------------
+    # /deleteevent
+    # -----------------------------------------------------
+    @app_commands.command(name="deleteevent", description="Delete an event")
+    async def deleteevent(self, interaction: discord.Interaction, event: str):
+        await interaction.response.defer()
+
+        event_id = extract_event_id(event)
+        if not event_id:
+            return await interaction.followup.send("❌ Invalid event ID.")
+
+        await self.delete_event(event_id)
+        await interaction.followup.send("🗑 Event deleted.")
+
+    # -----------------------------------------------------
+    # LAST 2 EVENTS CHANNEL
+    # -----------------------------------------------------
+    async def post_last_two_events(self):
+        if not self.last_events_channel_id:
+            return
+
+        channel = self.bot.get_channel(self.last_events_channel_id)
+        if not channel:
+            return
+
+        rows = await self.fetch_events()
+        last_two = rows[-2:]
+
+        await channel.purge(limit=10)
+
+        for e in last_two:
+            embed = discord.Embed(
+                title=e["title"],
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="Date", value=e["event_date"])
+            embed.add_field(name="Time", value=e["time"])
+            embed.add_field(name="Server", value=e["server"])
+            embed.add_field(name="Slot", value=str(e["slot"]))
+            embed.url = f"https://truckersmp.com/events/{e['event_id']}"
+
+            await channel.send(embed=embed)
 
     # -----------------------------------------------------
     # LOOPS
@@ -275,55 +324,15 @@ class TruckersMPEvents(commands.Cog):
         except:
             pass
 
-    @tasks.loop(minutes=30)
-    async def reminder_loop(self):
-        now_ist = datetime.now(IST)
-        rows = await self.fetch_events()
-
-        for row in rows:
-            event_id = row["event_id"]
-            guild_id = row["guild_id"]
-            role_id = row["role_id"]
-            event_date = row["event_date"]
-
-            try:
-                event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
-
-                if now_ist.date() == event_day and now_ist.hour == 7:
-                    guild = self.bot.get_guild(guild_id)
-                    if not guild:
-                        continue
-
-                    role = guild.get_role(role_id)
-                    if not role:
-                        continue
-
-                    for member in role.members:
-                        try:
-                            await member.send(
-                                f"⏰ Reminder: Event today!\n"
-                                f"https://truckersmp.com/events/{event_id}"
-                            )
-                        except:
-                            pass
-            except:
-                continue
-
     @tasks.loop(hours=6)
     async def cleanup_loop(self):
         today = datetime.now(IST).date()
         rows = await self.fetch_events()
 
         for row in rows:
-            event_id = row["event_id"]
-            event_date = row["event_date"]
-
-            try:
-                event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
-                if event_day < today:
-                    await self.delete_event(event_id)
-            except:
-                continue
+            event_day = datetime.strptime(row["event_date"], "%Y-%m-%d").date()
+            if event_day < today:
+                await self.delete_event(row["event_id"])
 
 
 # =========================================================
