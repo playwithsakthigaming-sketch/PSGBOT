@@ -61,9 +61,7 @@ async def fetch_route_image(event_url: str) -> str | None:
                 html = await res.text()
                 soup = BeautifulSoup(html, "html.parser")
 
-                # -----------------------------
-                # METHOD 1: Normal <img> tag
-                # -----------------------------
+                # Method 1: Image under route header
                 for header in soup.find_all(["h2", "h3", "h4"]):
                     if "route" in header.text.lower():
                         section = header.find_next("div")
@@ -75,14 +73,11 @@ async def fetch_route_image(event_url: str) -> str | None:
                                     src = "https://truckersmp.com" + src
                                 return fix_imgur(src)
 
-                # -----------------------------
-                # METHOD 2: Markdown images
-                # -----------------------------
+                # Method 2: Markdown image
                 match = re.search(r'!\[[^\]]*\]\((https?://[^\)]+)\)', html)
                 if match:
                     return fix_imgur(match.group(1))
 
-                # Broken format
                 match = re.search(r'!\[\](https?://\S+)', html)
                 if match:
                     return fix_imgur(match.group(1))
@@ -93,13 +88,11 @@ async def fetch_route_image(event_url: str) -> str | None:
     return None
 
 
-# =============================
-# IMGUR FIX
-# =============================
 def fix_imgur(url: str) -> str:
     if "imgur.com" in url and "i.imgur.com" not in url:
         url = url.replace("imgur.com", "i.imgur.com")
     return url
+
 
 # =========================================================
 # COG
@@ -145,12 +138,13 @@ class TruckersMPEvents(commands.Cog):
             ) as res:
                 return await res.json()
 
-    async def delete_event(self, event_id):
+    async def delete_event_db(self, event_id):
         async with aiohttp.ClientSession() as session:
-            await session.delete(
+            async with session.delete(
                 f"{SUPABASE_URL}/rest/v1/events?event_id=eq.{event_id}",
                 headers=HEADERS
-            )
+            ) as res:
+                return res.status == 204
 
     # -----------------------------------------------------
     # /event
@@ -220,6 +214,24 @@ class TruckersMPEvents(commands.Cog):
 
         await self.insert_event(event_id, interaction.guild.id, role.id, event_date)
         await interaction.followup.send("✅ Event posted and saved.")
+
+    # -----------------------------------------------------
+    # /deleteevent
+    # -----------------------------------------------------
+    @app_commands.command(name="deleteevent", description="Delete a saved event")
+    async def deleteevent(self, interaction: discord.Interaction, event: str):
+        await interaction.response.defer(ephemeral=True)
+
+        event_id = extract_event_id(event)
+        if not event_id:
+            return await interaction.followup.send("❌ Invalid event link or ID.")
+
+        success = await self.delete_event_db(event_id)
+
+        if success:
+            await interaction.followup.send("🗑️ Event deleted successfully.")
+        else:
+            await interaction.followup.send("⚠️ Event not found or already deleted.")
 
     # -----------------------------------------------------
     # /calendar
@@ -321,7 +333,7 @@ class TruckersMPEvents(commands.Cog):
             try:
                 event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
                 if event_day < today:
-                    await self.delete_event(event_id)
+                    await self.delete_event_db(event_id)
             except:
                 continue
 
