@@ -75,7 +75,7 @@ async def fetch_route_image(event_url: str) -> str | None:
 
                 # Method 2: Markdown image
                 text = soup.get_text()
-                match = re.search(r'![](https?://))', text)
+                match = re.search(r'![](\1))', text)
                 if match:
                     return match.group(1)
 
