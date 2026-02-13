@@ -246,47 +246,39 @@ class Admin(commands.Cog):
     # ========================
     @app_commands.command(name="addemoji")
     @app_commands.checks.has_permissions(manage_emojis=True)
-    async def addemoji(self, interaction: discord.Interaction, name: str, emojiurl: str = None, file: discord.Attachment = None):
+    async def addemoji(self, interaction: discord.Interaction, name: str, emoji: str = None, file: discord.Attachment = None):
         await interaction.response.defer(ephemeral=True)
 
-        if not emojiurl and not file:
-            return await interaction.followup.send("❌ Provide emoji URL or file.", ephemeral=True)
+        if not emoji and not file:
+            return await interaction.followup.send("❌ Provide emoji, ID, URL, or file.", ephemeral=True)
 
-        if emojiurl:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(emojiurl) as resp:
-                    image_bytes = await resp.read()
-        else:
-            image_bytes = await file.read()
+        try:
+            if file:
+                image_bytes = await file.read()
+            else:
+                if emoji.startswith("<:") or emoji.startswith("<a:"):
+                    emoji_id = int(emoji.split(":")[-1].replace(">", ""))
+                    url = f"https://cdn.discordapp.com/emojis/{emoji_id}.png"
+                elif emoji.isdigit():
+                    url = f"https://cdn.discordapp.com/emojis/{emoji}.png"
+                else:
+                    url = emoji
 
-        image_bytes = resize_emoji(image_bytes)
-        emoji = await interaction.guild.create_custom_emoji(name=name, image=image_bytes)
-        await interaction.followup.send(f"✅ Emoji added: {emoji}", ephemeral=True)
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url) as resp:
+                        image_bytes = await resp.read()
+
+            image_bytes = resize_emoji(image_bytes)
+            new_emoji = await interaction.guild.create_custom_emoji(name=name, image=image_bytes)
+            await interaction.followup.send(f"✅ Emoji added: {new_emoji}", ephemeral=True)
+
+        except Exception as e:
+            print("Addemoji error:", e)
+            await interaction.followup.send("❌ Failed to add emoji.", ephemeral=True)
 
     # ========================
     # SERVER TOOLS
     # ========================
-    @app_commands.command(name="selfrole")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def selfrole(self, interaction: discord.Interaction, channel: discord.TextChannel, title: str, description: str, imageurl: str, roles: str):
-        await interaction.response.defer(ephemeral=True)
-
-        pairs = []
-        for item in roles.split(","):
-            role_part, emoji = item.split(":")
-            role_id = int(role_part.replace("<@&", "").replace(">", ""))
-            role = interaction.guild.get_role(role_id)
-            if role:
-                pairs.append((role, emoji))
-
-        embed = discord.Embed(title=title, description=description)
-        if imageurl:
-            embed.set_image(url=imageurl)
-
-        view = SelfRoleView(pairs)
-        await channel.send(embed=embed, view=view)
-        await interaction.followup.send("✅ Self role panel created!", ephemeral=True)
-
     @app_commands.command(name="clear")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def clear(self, interaction: discord.Interaction, amount: int):
