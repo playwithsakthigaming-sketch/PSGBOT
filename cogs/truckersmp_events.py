@@ -1,15 +1,25 @@
 import discord
-import aiosqlite
 import aiohttp
 import re
+import os
 from datetime import datetime, timedelta, timezone
 from discord.ext import commands, tasks
 from discord import app_commands
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
-DB_NAME = "events.db"
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
+
 API_EVENT = "https://api.truckersmp.com/v2/events/{}"
-
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -48,6 +58,7 @@ async def fetch_route_image(event_url: str) -> str | None:
                 html = await res.text()
                 soup = BeautifulSoup(html, "html.parser")
 
+                # Normal <img>
                 for header in soup.find_all(["h2", "h3", "h4"]):
                     if "route" in header.text.lower():
                         section = header.find_next("div")
@@ -58,6 +69,13 @@ async def fetch_route_image(event_url: str) -> str | None:
                                 if src.startswith("/"):
                                     return "https://truckersmp.com" + src
                                 return src
+
+                # Markdown ![](url)
+                text = soup.get_text()
+                match = re.search(r'!\[\]\((https?://[^\)]+)\)', text)
+                if match:
+                    return match.group(1)
+
     except:
         pass
 
@@ -74,27 +92,46 @@ class TruckersMPEvents(commands.Cog):
         self.calendar_message_id = None
         self.calendar_channel_id = None
         self.reminder_loop.start()
-        self.cleanup_loop.start()
         self.calendar_loop.start()
+        self.cleanup_loop.start()
 
     def cog_unload(self):
         self.reminder_loop.cancel()
-        self.cleanup_loop.cancel()
         self.calendar_loop.cancel()
+        self.cleanup_loop.cancel()
 
-    async def init_db(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS events (
-                    event_id INTEGER,
-                    guild_id INTEGER,
-                    role_id INTEGER,
-                    event_date TEXT,
-                    slot_number INTEGER,
-                    slot_image TEXT
-                )
-            """)
-            await db.commit()
+    # -----------------------------------------------------
+    # SUPABASE HELPERS
+    # -----------------------------------------------------
+    async def insert_event(self, event_id, guild_id, role_id, event_date):
+        payload = {
+            "event_id": event_id,
+            "guild_id": guild_id,
+            "role_id": role_id,
+            "event_date": event_date
+        }
+
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                f"{SUPABASE_URL}/rest/v1/events",
+                headers=HEADERS,
+                json=payload
+            )
+
+    async def fetch_events(self):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{SUPABASE_URL}/rest/v1/events",
+                headers=HEADERS
+            ) as res:
+                return await res.json()
+
+    async def delete_event(self, event_id):
+        async with aiohttp.ClientSession() as session:
+            await session.delete(
+                f"{SUPABASE_URL}/rest/v1/events?event_id=eq.{event_id}",
+                headers=HEADERS
+            )
 
     # -----------------------------------------------------
     # /event
@@ -132,90 +169,47 @@ class TruckersMPEvents(commands.Cog):
 
         route_image = await fetch_route_image(url)
 
-        # MAIN EMBED
-        embed = discord.Embed(
-            title=title,
-            url=url,
-            description=description,
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="Server", value=server, inline=True)
-        embed.add_field(name="Date (IST)", value=dt_ist.strftime("%d %b %Y"), inline=True)
-        embed.add_field(name="Time (IST)", value=dt_ist.strftime("%H:%M"), inline=True)
+        embed = discord.Embed(title=title, url=url, description=description)
+        embed.add_field(name="Server", value=server)
+        embed.add_field(name="Date", value=dt_ist.strftime("%d %b %Y"))
+        embed.add_field(name="Time", value=dt_ist.strftime("%H:%M"))
 
         if banner:
             embed.set_image(url=banner)
 
-        # ROUTE EMBED
-        route_embed = None
-        if route_image:
-            route_embed = discord.Embed(
-                title="🗺 Event Route",
-                color=discord.Color.green()
-            )
-            route_embed.set_image(url=route_image)
-
-        # SLOT EMBED
-        slot_embed = discord.Embed(
-            title="🚚 Slot Information",
-            color=discord.Color.green()
-        )
-        slot_embed.add_field(name="Slot Number", value=str(slot_number))
-
-        if slot_image:
-            slot_embed.set_image(url=slot_image)
-
         await channel.send(role.mention)
         await channel.send(embed=embed)
 
-        if route_embed:
+        if route_image:
+            route_embed = discord.Embed(title="🗺 Route")
+            route_embed.set_image(url=route_image)
             await channel.send(embed=route_embed)
+
+        slot_embed = discord.Embed(title="🚚 Slot Info")
+        slot_embed.add_field(name="Slot", value=str(slot_number))
+        if slot_image:
+            slot_embed.set_image(url=slot_image)
 
         await channel.send(embed=slot_embed)
 
-        # Save event
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)",
-                (event_id, interaction.guild.id, role.id, event_date, slot_number, slot_image)
-            )
-            await db.commit()
-
-        await interaction.followup.send("✅ Event posted and reminder scheduled.")
+        await self.insert_event(event_id, interaction.guild.id, role.id, event_date)
+        await interaction.followup.send("✅ Event posted and saved.")
 
     # -----------------------------------------------------
-    # /calendar
+    # CALENDAR
     # -----------------------------------------------------
-    @app_commands.command(name="calendar", description="Create event calendar")
-    async def calendar(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        await interaction.response.defer()
-
-        embed = await self.build_calendar_embed()
-        msg = await channel.send(embed=embed)
-
-        self.calendar_channel_id = channel.id
-        self.calendar_message_id = msg.id
-
-        await interaction.followup.send("📅 Calendar created and auto-refresh enabled.")
-
     async def build_calendar_embed(self):
-        embed = discord.Embed(
-            title="📅 Event Calendar",
-            color=discord.Color.orange()
-        )
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute(
-                "SELECT event_id, event_date FROM events ORDER BY event_date"
-            ) as cursor:
-                rows = await cursor.fetchall()
+        embed = discord.Embed(title="📅 Event Calendar", color=discord.Color.orange())
+        rows = await self.fetch_events()
 
         if not rows:
             embed.description = "No upcoming events."
             return embed
 
         lines = []
-        for event_id, event_date in rows:
+        for row in rows:
+            event_id = row["event_id"]
+            event_date = row["event_date"]
             dt = datetime.strptime(event_date, "%Y-%m-%d")
             formatted = dt.strftime("%d %b %Y")
             url = f"https://truckersmp.com/events/{event_id}"
@@ -225,7 +219,7 @@ class TruckersMPEvents(commands.Cog):
         return embed
 
     # -----------------------------------------------------
-    # CALENDAR AUTO REFRESH
+    # LOOPS
     # -----------------------------------------------------
     @tasks.loop(minutes=2)
     async def calendar_loop(self):
@@ -243,116 +237,51 @@ class TruckersMPEvents(commands.Cog):
         except:
             pass
 
-    # -----------------------------------------------------
-    # REMINDER LOOP (7 AM IST)
-    # -----------------------------------------------------
-    @tasks.loop(minutes=3)
+    @tasks.loop(minutes=30)
     async def reminder_loop(self):
         now_ist = datetime.now(IST)
+        rows = await self.fetch_events()
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT * FROM events") as cursor:
-                rows = await cursor.fetchall()
+        for row in rows:
+            event_id = row["event_id"]
+            guild_id = row["guild_id"]
+            role_id = row["role_id"]
+            event_date = row["event_date"]
 
-        for event_id, guild_id, role_id, event_date, slot_number, slot_image in rows:
             try:
                 event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
 
                 if now_ist.date() == event_day and now_ist.hour == 7:
                     guild = self.bot.get_guild(guild_id)
-                    if not guild:
-                        continue
-
                     role = guild.get_role(role_id)
-                    if not role:
-                        continue
-
-                    data = await fetch_event(event_id)
-                    if not data:
-                        continue
-
-                    title = data["name"]
-                    description = data["description"][:1000]
-                    start_time = data["start_at"]
-                    server = data["server"]["name"]
-                    banner = data.get("banner")
-                    url = f"https://truckersmp.com/events/{event_id}"
-
-                    dt_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    dt_ist = dt_utc.astimezone(IST)
-
-                    route_image = await fetch_route_image(url)
-
-                    main_embed = discord.Embed(
-                        title=title,
-                        url=url,
-                        description=description,
-                        color=discord.Color.blue()
-                    )
-                    main_embed.add_field(name="Server", value=server, inline=True)
-                    main_embed.add_field(name="Date (IST)", value=dt_ist.strftime("%d %b %Y"), inline=True)
-                    main_embed.add_field(name="Time (IST)", value=dt_ist.strftime("%H:%M"), inline=True)
-
-                    if banner:
-                        main_embed.set_image(url=banner)
-
-                    route_embed = None
-                    if route_image:
-                        route_embed = discord.Embed(
-                            title="🗺 Event Route",
-                            color=discord.Color.green()
-                        )
-                        route_embed.set_image(url=route_image)
-
-                    slot_embed = discord.Embed(
-                        title="🚚 Slot Information",
-                        color=discord.Color.green()
-                    )
-                    slot_embed.add_field(name="Slot Number", value=str(slot_number))
-
-                    if slot_image:
-                        slot_embed.set_image(url=slot_image)
 
                     for member in role.members:
                         try:
-                            await member.send("⏰ **Event Reminder – Today!**")
-                            await member.send(embed=main_embed)
-
-                            if route_embed:
-                                await member.send(embed=route_embed)
-
-                            await member.send(embed=slot_embed)
+                            await member.send(
+                                f"⏰ Reminder: Event today!\n"
+                                f"https://truckersmp.com/events/{event_id}"
+                            )
                         except:
                             pass
             except:
                 continue
 
-    # -----------------------------------------------------
-    # AUTO DELETE PAST EVENTS
-    # -----------------------------------------------------
     @tasks.loop(hours=6)
     async def cleanup_loop(self):
         today = datetime.now(IST).date()
+        rows = await self.fetch_events()
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM events WHERE event_date < ?",
-                (today.strftime("%Y-%m-%d"),)
-            )
-            await db.commit()
+        for row in rows:
+            event_id = row["event_id"]
+            event_date = row["event_date"]
 
-    # -----------------------------------------------------
-    @reminder_loop.before_loop
-    @cleanup_loop.before_loop
-    @calendar_loop.before_loop
-    async def before_loops(self):
-        await self.bot.wait_until_ready()
-        await self.init_db()
+            try:
+                event_day = datetime.strptime(event_date, "%Y-%m-%d").date()
+                if event_day < today:
+                    await self.delete_event(event_id)
+            except:
+                continue
 
-
-# =========================================================
-# SETUP
-# =========================================================
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TruckersMPEvents(bot))
