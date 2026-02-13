@@ -1,35 +1,29 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import aiosqlite
 import aiohttp
+import os
+from dotenv import load_dotenv
 
-DB_NAME = "links.db"
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 UPLOAD_API = "https://files.psgfamily.online/upload"
+
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
 
 
 class LinkStorage(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        bot.loop.create_task(self.init_db())
 
     # ===============================
-    # DATABASE
-    # ===============================
-    async def init_db(self):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS links (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id INTEGER,
-                    name TEXT,
-                    url TEXT
-                )
-            """)
-            await db.commit()
-
-    # ===============================
-    # FILE UPLOAD WITH CUSTOM NAME
+    # FILE UPLOAD
     # ===============================
     async def upload_to_server(self, file: discord.Attachment, name: str):
         try:
@@ -40,7 +34,7 @@ class LinkStorage(commands.Cog):
                 file_bytes = await file.read()
 
                 data.add_field("file", file_bytes, filename=file.filename)
-                data.add_field("name", name)  # send custom name
+                data.add_field("name", name)
 
                 async with session.post(UPLOAD_API, data=data) as resp:
                     text = await resp.text()
@@ -73,7 +67,6 @@ class LinkStorage(commands.Cog):
         url: str = None,
         file: discord.Attachment = None
     ):
-        # Prevent Discord timeout
         await interaction.response.defer(ephemeral=True)
 
         if not url and not file:
@@ -86,16 +79,26 @@ class LinkStorage(commands.Cog):
             uploaded_url = await self.upload_to_server(file, name)
             if not uploaded_url:
                 return await interaction.followup.send(
-                    "❌ File upload failed. Check server logs."
+                    "❌ File upload failed."
                 )
             url = uploaded_url
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "INSERT INTO links (guild_id, name, url) VALUES (?, ?, ?)",
-                (interaction.guild_id, name, url)
-            )
-            await db.commit()
+        payload = {
+            "guild_id": interaction.guild_id,
+            "name": name,
+            "url": url
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{SUPABASE_URL}/rest/v1/links",
+                headers=HEADERS,
+                json=payload
+            ) as resp:
+                if resp.status not in (200, 201):
+                    return await interaction.followup.send(
+                        "❌ Failed to save link."
+                    )
 
         await interaction.followup.send(
             f"✅ **{name}** saved:\n{url}"
@@ -106,12 +109,17 @@ class LinkStorage(commands.Cog):
     # ===============================
     @app_commands.command(name="links", description="Show stored links")
     async def links(self, interaction: discord.Interaction):
-        async with aiosqlite.connect(DB_NAME) as db:
-            cursor = await db.execute(
-                "SELECT id, name, url FROM links WHERE guild_id=?",
-                (interaction.guild_id,)
-            )
-            rows = await cursor.fetchall()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{SUPABASE_URL}/rest/v1/links?guild_id=eq.{interaction.guild_id}",
+                headers=HEADERS
+            ) as resp:
+                if resp.status != 200:
+                    return await interaction.response.send_message(
+                        "❌ Failed to fetch links.",
+                        ephemeral=True
+                    )
+                rows = await resp.json()
 
         if not rows:
             return await interaction.response.send_message(
@@ -124,10 +132,10 @@ class LinkStorage(commands.Cog):
             color=discord.Color.blue()
         )
 
-        for link_id, name, url in rows:
+        for row in rows:
             embed.add_field(
-                name=f"{link_id}. {name}",
-                value=url,
+                name=f"{row['id']}. {row['name']}",
+                value=row["url"],
                 inline=False
             )
 
@@ -139,12 +147,16 @@ class LinkStorage(commands.Cog):
     @app_commands.command(name="removelink", description="Remove a stored link")
     @app_commands.describe(link_id="ID of the link to remove")
     async def removelink(self, interaction: discord.Interaction, link_id: int):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM links WHERE id=? AND guild_id=?",
-                (link_id, interaction.guild_id)
-            )
-            await db.commit()
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(
+                f"{SUPABASE_URL}/rest/v1/links?id=eq.{link_id}&guild_id=eq.{interaction.guild_id}",
+                headers=HEADERS
+            ) as resp:
+                if resp.status not in (200, 204):
+                    return await interaction.response.send_message(
+                        "❌ Failed to remove link.",
+                        ephemeral=True
+                    )
 
         await interaction.response.send_message(
             "🗑️ Link removed.",
@@ -157,12 +169,16 @@ class LinkStorage(commands.Cog):
     @app_commands.command(name="clearlinks", description="Remove all stored links")
     @app_commands.checks.has_permissions(administrator=True)
     async def clearlinks(self, interaction: discord.Interaction):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM links WHERE guild_id=?",
-                (interaction.guild_id,)
-            )
-            await db.commit()
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(
+                f"{SUPABASE_URL}/rest/v1/links?guild_id=eq.{interaction.guild_id}",
+                headers=HEADERS
+            ) as resp:
+                if resp.status not in (200, 204):
+                    return await interaction.response.send_message(
+                        "❌ Failed to clear links.",
+                        ephemeral=True
+                    )
 
         await interaction.response.send_message(
             "🗑️ All links cleared.",
@@ -170,8 +186,5 @@ class LinkStorage(commands.Cog):
         )
 
 
-# ===============================
-# REQUIRED SETUP FUNCTION
-# ===============================
 async def setup(bot):
     await bot.add_cog(LinkStorage(bot))
