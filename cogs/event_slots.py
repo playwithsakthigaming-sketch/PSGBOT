@@ -6,7 +6,6 @@ from datetime import datetime
 
 DB_NAME = "event_slots.db"
 STAFF_ROLE_ID = 1472812153789747402  # replace with your staff role ID
-LOG_CHANNELS = {}
 
 
 # ===============================
@@ -80,7 +79,6 @@ class BookingModal(discord.ui.Modal):
             ephemeral=True
         )
 
-        # Send to staff channel
         staff_ch = interaction.guild.get_channel(self.staff_channel)
         if staff_ch:
             embed = discord.Embed(
@@ -101,21 +99,6 @@ class BookingModal(discord.ui.Modal):
                 self.image
             )
             await staff_ch.send(embed=embed, view=view)
-
-        # Log booking
-        log_channel_id = LOG_CHANNELS.get(interaction.guild_id)
-        if log_channel_id:
-            log_ch = interaction.guild.get_channel(log_channel_id)
-            if log_ch:
-                log_embed = discord.Embed(
-                    title="📥 Slot Booking Request",
-                    color=discord.Color.orange()
-                )
-                log_embed.add_field(name="User", value=interaction.user.mention)
-                log_embed.add_field(name="VTC", value=self.vtc_name.value)
-                log_embed.add_field(name="Slot", value=str(self.slot_no))
-                log_embed.add_field(name="Drivers", value=str(driver_count))
-                await log_ch.send(embed=log_embed)
 
 
 # ===============================
@@ -165,7 +148,7 @@ class StaffView(discord.ui.View):
                 pass
 
         await interaction.followup.send("✅ Slot approved.", ephemeral=True)
-        await self.cog.update_all_panels(interaction.guild)
+        await self.cog.update_embeds(interaction.guild)
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.red)
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -191,7 +174,7 @@ class StaffView(discord.ui.View):
                 pass
 
         await interaction.followup.send("❌ Slot rejected.", ephemeral=True)
-        await self.cog.update_all_panels(interaction.guild)
+        await self.cog.update_embeds(interaction.guild)
 
 
 # ===============================
@@ -284,10 +267,9 @@ class EventSlots(commands.Cog):
         name: str,
         image: str,
         slots: str,
-        staff_channel: discord.TextChannel,
-        send_channel: discord.TextChannel
+        staff_channel: discord.TextChannel
     ):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
 
         slot_list = [int(s.strip()) for s in slots.split(",")]
         buttons = []
@@ -312,12 +294,67 @@ class EventSlots(commands.Cog):
         embed.set_image(url=image)
 
         view = SlotView(buttons)
-        msg = await send_channel.send(embed=embed, view=view)
+        msg = await interaction.followup.send(embed=embed, view=view)
+        self.panel_messages[interaction.guild_id] = msg
 
-        self.panel_messages.setdefault(interaction.guild_id, []).append(msg)
+    # ---------------------------
+    # SHOW SLOTS
+    # ---------------------------
+    @app_commands.command(name="showslots")
+    async def showslots(self, interaction: discord.Interaction, event_id: str):
+        await interaction.response.defer()
 
-        await interaction.followup.send(
-            f"✅ Slot panel sent to {send_channel.mention}",
+        async with aiosqlite.connect(DB_NAME) as db:
+            cur = await db.execute(
+                "SELECT slot_no, status, vtc_name FROM event_slots WHERE event_id=?",
+                (event_id,)
+            )
+            rows = await cur.fetchall()
+
+        text = ""
+        for slot, status, vtc in rows:
+            if status == "approved":
+                state = f"Booked ({vtc})"
+            elif status == "pending":
+                state = "Pending"
+            else:
+                state = "Available"
+
+            text += f"🅿️ Slot {slot}: *{state}*\n"
+
+        embed = discord.Embed(title="Slot Status", description=text)
+        await interaction.followup.send(embed=embed)
+
+    # ---------------------------
+    # RESET SLOT
+    # ---------------------------
+    @app_commands.command(name="resetslot")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def resetslot(self, interaction: discord.Interaction, slot_id: int):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "UPDATE event_slots SET status='free', booked_by=NULL WHERE id=?",
+                (slot_id,)
+            )
+            await db.commit()
+
+        await interaction.response.send_message("♻️ Slot reset.", ephemeral=True)
+
+    # ---------------------------
+    # CLEAR EVENT
+    # ---------------------------
+    @app_commands.command(name="clearevent")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def clearevent(self, interaction: discord.Interaction, event_id: str):
+        async with aiosqlite.connect(DB_NAME) as db:
+            await db.execute(
+                "DELETE FROM event_slots WHERE event_id=?",
+                (event_id,)
+            )
+            await db.commit()
+
+        await interaction.response.send_message(
+            "🗑️ Event slots cleared.",
             ephemeral=True
         )
 
@@ -326,16 +363,20 @@ class EventSlots(commands.Cog):
     # ---------------------------
     @tasks.loop(seconds=10)
     async def refresh_panels(self):
-        for guild_id, messages in self.panel_messages.items():
+        for guild_id in self.panel_messages:
             guild = self.bot.get_guild(guild_id)
             if guild:
-                for msg in messages:
-                    try:
-                        await self.update_single_panel(guild, msg)
-                    except:
-                        pass
+                await self.update_embeds(guild)
 
-    async def update_single_panel(self, guild, msg):
+    @refresh_panels.before_loop
+    async def before_refresh(self):
+        await self.bot.wait_until_ready()
+
+    async def update_embeds(self, guild):
+        msg = self.panel_messages.get(guild.id)
+        if not msg:
+            return
+
         buttons = []
         text = ""
 
@@ -359,11 +400,19 @@ class EventSlots(commands.Cog):
             text += f"🅿️ Slot {slot_no}: *{state}*\n"
 
             buttons.append(
-                SlotButton(self, slot_id, slot_no, image_url, 0, status)
+                SlotButton(
+                    self,
+                    slot_id,
+                    slot_no,
+                    image_url,
+                    0,
+                    status
+                )
             )
 
         embed = msg.embeds[0]
         embed.description = text
+
         view = SlotView(buttons)
         await msg.edit(embed=embed, view=view)
 
