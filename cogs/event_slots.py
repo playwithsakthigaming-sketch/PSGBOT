@@ -159,10 +159,8 @@ class SlotButton(discord.ui.Button):
     def __init__(self, cog, slot_id, slot_no, image, staff_channel, status):
         if status == "free":
             style = discord.ButtonStyle.green
-        elif status == "pending":
-            style = discord.ButtonStyle.red
         else:
-            style = discord.ButtonStyle.green
+            style = discord.ButtonStyle.red
 
         super().__init__(
             label=f"Slot {slot_no}",
@@ -277,67 +275,6 @@ class EventSlots(commands.Cog):
         self.panel_messages[interaction.guild_id] = msg
 
     # ---------------------------
-    # SHOW SLOTS
-    # ---------------------------
-    @app_commands.command(name="showslots")
-    async def showslots(self, interaction: discord.Interaction, event_id: str):
-        await interaction.response.defer()
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute(
-                "SELECT slot_no, status, vtc_name FROM event_slots WHERE event_id=?",
-                (event_id,)
-            )
-            rows = await cur.fetchall()
-
-        text = ""
-        for slot, status, vtc in rows:
-            if status == "approved":
-                state = f"Booked ({vtc})"
-            elif status == "pending":
-                state = "Pending"
-            else:
-                state = "Available"
-
-            text += f"🅿️ Slot {slot}: *{state}*\n"
-
-        embed = discord.Embed(title="Slot Status", description=text)
-        await interaction.followup.send(embed=embed)
-
-    # ---------------------------
-    # RESET SLOT
-    # ---------------------------
-    @app_commands.command(name="resetslot")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def resetslot(self, interaction: discord.Interaction, slot_id: int):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "UPDATE event_slots SET status='free', booked_by=NULL WHERE id=?",
-                (slot_id,)
-            )
-            await db.commit()
-
-        await interaction.response.send_message("♻️ Slot reset.", ephemeral=True)
-
-    # ---------------------------
-    # CLEAR EVENT
-    # ---------------------------
-    @app_commands.command(name="clearevent")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def clearevent(self, interaction: discord.Interaction, event_id: str):
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute(
-                "DELETE FROM event_slots WHERE event_id=?",
-                (event_id,)
-            )
-            await db.commit()
-
-        await interaction.response.send_message(
-            "🗑️ Event slots cleared.",
-            ephemeral=True
-        )
-
-    # ---------------------------
     # AUTO PANEL REFRESH
     # ---------------------------
     @tasks.loop(seconds=10)
@@ -362,27 +299,51 @@ class EventSlots(commands.Cog):
         if not msg:
             return
 
+        buttons = []
+        text = ""
+
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute(
-                "SELECT slot_no, status, vtc_name FROM event_slots WHERE guild_id=?",
+                """
+                SELECT id, slot_no, status, vtc_name
+                FROM event_slots
+                WHERE guild_id=?
+                ORDER BY slot_no
+                """,
                 (guild.id,)
             )
             rows = await cur.fetchall()
 
-        text = ""
-        for slot, status, vtc in rows:
+        image_url = msg.embeds[0].image.url
+
+        for slot_id, slot_no, status, vtc_name in rows:
             if status == "approved":
-                state = f"Booked ({vtc})"
+                state = f"Booked ({vtc_name})" if vtc_name else "Booked"
             elif status == "pending":
                 state = "Pending"
             else:
                 state = "Available"
 
-            text += f"🅿️ Slot {slot}: *{state}*\n"
+            text += f"🅿️ Slot {slot_no}: *{state}*\n"
+
+            # Only show buttons for free or pending
+            if status != "approved":
+                buttons.append(
+                    SlotButton(
+                        self,
+                        slot_id,
+                        slot_no,
+                        image_url,
+                        0,
+                        status
+                    )
+                )
 
         embed = msg.embeds[0]
         embed.description = text
-        await msg.edit(embed=embed)
+
+        view = SlotView(buttons)
+        await msg.edit(embed=embed, view=view)
 
 
 async def setup(bot):
