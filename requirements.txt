@@ -11,3 +11,4 @@ langdetect
 beautifulsoup4
 aiohttp
 flask
+supabase
