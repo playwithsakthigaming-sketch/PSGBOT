@@ -13,7 +13,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-STAFF_ROLE = "Event Staff"
+STAFF_ROLE_ID = 1472812153789747402  # replace with your staff role ID
 
 
 # ===============================
