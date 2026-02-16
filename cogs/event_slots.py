@@ -1,11 +1,11 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import aiosqlite
 from datetime import datetime
 
 DB_NAME = "event_slots.db"
-STAFF_ROLE_ID = 1472812153789747402  # replace with your role ID
+STAFF_ROLE_ID = 1472812153789747402  # replace with your staff role ID
 
 
 # ===============================
@@ -160,7 +160,7 @@ class SlotButton(discord.ui.Button):
         if status == "free":
             style = discord.ButtonStyle.green
         elif status == "pending":
-            style = discord.ButtonStyle.gray
+            style = discord.ButtonStyle.red
         else:
             style = discord.ButtonStyle.green
 
@@ -209,6 +209,7 @@ class EventSlots(commands.Cog):
         self.bot = bot
         self.panel_messages = {}
         bot.loop.create_task(self.init_db())
+        self.refresh_panels.start()
 
     async def init_db(self):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -336,6 +337,26 @@ class EventSlots(commands.Cog):
             ephemeral=True
         )
 
+    # ---------------------------
+    # AUTO PANEL REFRESH
+    # ---------------------------
+    @tasks.loop(seconds=10)
+    async def refresh_panels(self):
+        for guild_id in self.panel_messages:
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                await self.update_embeds(guild)
+
+    @refresh_panels.before_loop
+    async def before_refresh(self):
+        await self.bot.wait_until_ready()
+
+    async def cog_unload(self):
+        self.refresh_panels.cancel()
+
+    # ---------------------------
+    # LIVE EMBED UPDATE
+    # ---------------------------
     async def update_embeds(self, guild):
         msg = self.panel_messages.get(guild.id)
         if not msg:
