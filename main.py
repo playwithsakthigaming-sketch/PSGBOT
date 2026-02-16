@@ -44,6 +44,7 @@ COGS = [
     "cogs.backup",
     "cogs.admin",
     "cogs.auto_tts",
+    "cogs.event_slot"
     "cogs.truckersmp_events",
     "cogs.vtc_auto_events",
     "cogs.shop",
