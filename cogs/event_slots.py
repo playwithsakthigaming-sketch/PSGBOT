@@ -20,7 +20,7 @@ HEADERS = {
 
 
 # ===============================
-# FETCH TRUCKERSMP EVENT TITLE
+# FETCH EVENT TITLE
 # ===============================
 async def fetch_event_title(event_input: str):
     match = re.search(r"\d+", event_input)
@@ -39,7 +39,7 @@ async def fetch_event_title(event_input: str):
 
 
 # ===============================
-# BUILD SLOT EMBED
+# SLOT EMBED
 # ===============================
 async def build_slot_embed(event_db_id):
     async with aiohttp.ClientSession() as session:
@@ -63,12 +63,11 @@ async def build_slot_embed(event_db_id):
                 f"{s['vtc_name']} ({status})\n"
             )
 
-    embed = discord.Embed(
+    return discord.Embed(
         title="📋 Slot List",
         description=description,
         color=discord.Color.orange()
     )
-    return embed
 
 
 # ===============================
@@ -122,8 +121,9 @@ class StaffConfirmView(discord.ui.View):
                 )
                 embed.add_field(
                     name="Type",
-                    value=data[0]["slot_title"]
+                    value=data[0]["slot_title"] or "Public"
                 )
+
                 if data[0]["slot_image"]:
                     embed.set_image(url=data[0]["slot_image"])
 
@@ -156,7 +156,24 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
         self.add_item(self.vtc)
 
     async def on_submit(self, interaction: discord.Interaction):
-        view = SlotSelectView(self.bot, self.event_db_id, self.vtc.value)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{SUPABASE_URL}/rest/v1/events"
+                f"?id=eq.{self.event_db_id}"
+                f"&select=total_slots",
+                headers=HEADERS
+            ) as resp:
+                data = await resp.json()
+                total_slots = data[0]["total_slots"]
+
+        view = SlotSelectView(
+            self.bot,
+            self.event_db_id,
+            self.vtc.value,
+            total_slots
+        )
+
         await interaction.response.send_message(
             "Select slot:",
             view=view,
@@ -168,10 +185,10 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
 # SLOT SELECT
 # ===============================
 class SlotSelect(discord.ui.Select):
-    def __init__(self, bot, event_db_id, vtc_name):
+    def __init__(self, bot, event_db_id, vtc_name, total_slots):
         options = [
             discord.SelectOption(label=f"Slot {i}", value=str(i))
-            for i in range(1, 6)
+            for i in range(1, total_slots + 1)
         ]
         super().__init__(placeholder="Choose slot", options=options)
         self.bot = bot
@@ -208,9 +225,11 @@ class SlotSelect(discord.ui.Select):
 
 
 class SlotSelectView(discord.ui.View):
-    def __init__(self, bot, event_db_id, vtc_name):
+    def __init__(self, bot, event_db_id, vtc_name, total_slots):
         super().__init__(timeout=300)
-        self.add_item(SlotSelect(bot, event_db_id, vtc_name))
+        self.add_item(
+            SlotSelect(bot, event_db_id, vtc_name, total_slots)
+        )
 
 
 # ===============================
@@ -264,7 +283,8 @@ class EventSlots(commands.Cog):
         date: str,
         time: str,
         route_details: str,
-        route_image: str
+        route_image: str,
+        total_slots: app_commands.Range[int, 1, 30]
     ):
         await interaction.response.defer()
 
@@ -277,7 +297,8 @@ class EventSlots(commands.Cog):
             "date": date,
             "time": time,
             "route_details": route_details,
-            "route_image": route_image
+            "route_image": route_image,
+            "total_slots": total_slots
         }
 
         async with aiohttp.ClientSession() as session:
@@ -297,6 +318,7 @@ class EventSlots(commands.Cog):
         embed.add_field(name="Date", value=date)
         embed.add_field(name="Time", value=time)
         embed.add_field(name="Route", value=route_details)
+        embed.add_field(name="Slots", value=str(total_slots))
         embed.set_image(url=route_image)
 
         view = discord.ui.View()
@@ -312,7 +334,6 @@ class EventSlots(commands.Cog):
 
         msg = await interaction.followup.send(embed=embed, view=view)
 
-        # Save message id
         async with aiohttp.ClientSession() as session:
             await session.patch(
                 f"{SUPABASE_URL}/rest/v1/events"
