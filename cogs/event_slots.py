@@ -80,36 +80,73 @@ class StaffView(discord.ui.View):
         self.user_id = user_id
         self.image = image
 
-    async def interaction_check(self, interaction):
-        return any(role.name == STAFF_ROLE for role in interaction.user.roles)
+    async def interaction_check(self, interaction: discord.Interaction):
+        # Check staff role by ID
+        if any(role.id == STAFF_ROLE_ID for role in interaction.user.roles):
+            return True
+
+        await interaction.response.send_message(
+            "❌ You are not event staff.",
+            ephemeral=True
+        )
+        return False
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.green)
-    async def approve(self, interaction, button):
-        supabase.table("event_slots").update({
-            "status": "approved"
-        }).eq("id", self.slot_id).execute()
+    async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
 
-        user = interaction.guild.get_member(self.user_id)
-        if user:
-            embed = discord.Embed(
-                title="Slot Approved",
-                color=discord.Color.green()
+            # Update database
+            supabase.table("event_slots").update({
+                "status": "approved"
+            }).eq("id", self.slot_id).execute()
+
+            # DM user
+            user = interaction.guild.get_member(self.user_id)
+            if user:
+                embed = discord.Embed(
+                    title="Slot Approved",
+                    description="Your slot booking has been approved.",
+                    color=discord.Color.green()
+                )
+                embed.set_image(url=self.image)
+                try:
+                    await user.send(embed=embed)
+                except:
+                    pass
+
+            await interaction.followup.send("✅ Slot approved.", ephemeral=True)
+
+            # Update public panel
+            await self.cog.update_embeds(interaction.guild)
+
+        except Exception as e:
+            print("Approve error:", e)
+            await interaction.followup.send(
+                "❌ Error approving slot.",
+                ephemeral=True
             )
-            embed.set_image(url=self.image)
-            await user.send(embed=embed)
-
-        await interaction.response.edit_message(content="✅ Approved", view=None)
-        await self.cog.update_embeds(interaction.guild)
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.red)
-    async def reject(self, interaction, button):
-        supabase.table("event_slots").update({
-            "status": "free",
-            "booked_by": None
-        }).eq("id", self.slot_id).execute()
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
 
-        await interaction.response.edit_message(content="❌ Rejected", view=None)
-        await self.cog.update_embeds(interaction.guild)
+            supabase.table("event_slots").update({
+                "status": "free",
+                "booked_by": None
+            }).eq("id", self.slot_id).execute()
+
+            await interaction.followup.send("❌ Slot rejected.", ephemeral=True)
+
+            await self.cog.update_embeds(interaction.guild)
+
+        except Exception as e:
+            print("Reject error:", e)
+            await interaction.followup.send(
+                "❌ Error rejecting slot.",
+                ephemeral=True
+            )
 
 
 # ===============================
