@@ -5,7 +5,7 @@ import aiosqlite
 from datetime import datetime
 
 DB_NAME = "event_slots.db"
-STAFF_ROLE_ID = 123456789012345678  # replace with your staff role ID
+STAFF_ROLE_ID = 1472812153789747402  # replace with your staff role ID
 LOG_CHANNELS = {}
 
 
