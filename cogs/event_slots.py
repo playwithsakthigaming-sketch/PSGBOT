@@ -5,7 +5,7 @@ import aiosqlite
 from datetime import datetime
 
 DB_NAME = "event_slots.db"
-STAFF_ROLE_ID = 1472812153789747402  # replace with your staff role ID
+STAFF_ROLE_ID = 1472812153789747402  # replace with your real staff role ID
 
 
 # ===============================
@@ -79,27 +79,30 @@ class BookingModal(discord.ui.Modal):
             ephemeral=True
         )
 
-        # Send to staff channel
+        # Send staff approval panel
         staff_ch = interaction.guild.get_channel(self.staff_channel)
-        if staff_ch:
-            embed = discord.Embed(
-                title=f"Slot {self.slot_no} Booking Request",
-                color=discord.Color.orange()
-            )
-            embed.add_field(name="User", value=interaction.user.mention)
-            embed.add_field(name="VTC", value=self.vtc_name.value)
-            embed.add_field(name="Drivers", value=str(driver_count))
-            embed.set_image(url=self.image)
+        if not staff_ch:
+            return
 
-            view = StaffView(
-                self.cog,
-                self.slot_id,
-                interaction.user.id,
-                self.slot_no,
-                self.vtc_name.value,
-                self.image
-            )
-            await staff_ch.send(embed=embed, view=view)
+        embed = discord.Embed(
+            title=f"Slot {self.slot_no} Booking Request",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="User", value=interaction.user.mention)
+        embed.add_field(name="VTC", value=self.vtc_name.value)
+        embed.add_field(name="Drivers", value=str(driver_count))
+        embed.set_image(url=self.image)
+
+        view = StaffView(
+            self.cog,
+            self.slot_id,
+            interaction.user.id,
+            self.slot_no,
+            self.vtc_name.value,
+            self.image
+        )
+
+        await staff_ch.send(embed=embed, view=view)
 
 
 # ===============================
@@ -119,7 +122,7 @@ class StaffView(discord.ui.View):
         if any(role.id == STAFF_ROLE_ID for role in interaction.user.roles):
             return True
         await interaction.response.send_message(
-            "❌ You are not event staff.",
+            "❌ Staff only.",
             ephemeral=True
         )
         return False
