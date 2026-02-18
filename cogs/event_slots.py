@@ -225,40 +225,160 @@ class SlotBooking(commands.Cog):
         )
 
     # -----------------------------
-    # LIST PANELS
+    # SEND PANEL
     # -----------------------------
-    @app_commands.command(name="panels")
-    async def panels(self, interaction: discord.Interaction):
+    @app_commands.command(name="sendpanel")
+    async def sendpanel(self, interaction: discord.Interaction, panel_id: int):
         async with aiosqlite.connect(DB_NAME) as db:
-            rows = await db.execute_fetchall("""
-                SELECT id, panel_name FROM panels
-            """)
+            panel = await db.execute_fetchone("""
+                SELECT e.event_name, p.slot_image
+                FROM panels p
+                JOIN events e ON p.event_id = e.event_id
+                WHERE p.id=?
+            """, (panel_id,))
 
-        if not rows:
+            slots = await db.execute_fetchall("""
+                SELECT slot_number, status
+                FROM slots
+                WHERE panel_id=?
+            """, (panel_id,))
+
+        if not panel:
             return await interaction.response.send_message(
-                "No panels found.", ephemeral=True
+                "Panel not found.", ephemeral=True
             )
 
-        text = "**Panels:**\n"
-        for pid, name in rows:
-            text += f"`{pid}` • {name}\n"
+        event_name, slot_image = panel
 
-        await interaction.response.send_message(text, ephemeral=True)
+        embed = discord.Embed(
+            title=event_name,
+            description="Click a slot to book.",
+            color=discord.Color.blue()
+        )
+        embed.set_image(url=slot_image)
 
-    # -----------------------------
-    # DELETE PANEL
-    # -----------------------------
-    @app_commands.command(name="deletepanel")
-    async def deletepanel(self, interaction: discord.Interaction, panel_id: int):
+        view = SlotView(panel_id, slots)
+        msg = await interaction.channel.send(embed=embed, view=view)
+
         async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("DELETE FROM panels WHERE id=?", (panel_id,))
-            await db.execute("DELETE FROM slots WHERE panel_id=?", (panel_id,))
+            await db.execute("""
+                UPDATE panels
+                SET message_id=?, channel_id=?
+                WHERE id=?
+            """, (msg.id, interaction.channel.id, panel_id))
             await db.commit()
 
-        await interaction.response.send_message(
-            f"🗑️ Panel {panel_id} deleted.",
-            ephemeral=True
+    # -----------------------------
+    # PROCESS BOOKING
+    # -----------------------------
+    async def process_booking(
+        self,
+        interaction,
+        panel_id,
+        slot_number,
+        vtc_name,
+        vtc_url,
+        position,
+        member_count
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        async with aiosqlite.connect(DB_NAME) as db:
+            row = await db.execute_fetchone("""
+                SELECT status FROM slots
+                WHERE panel_id=? AND slot_number=?
+            """, (panel_id, slot_number))
+
+            if not row or row[0] != "open":
+                return await interaction.followup.send("❌ Slot already taken.")
+
+            await db.execute("""
+                UPDATE slots
+                SET status='pending',
+                    booked_by=?,
+                    vtc_name=?,
+                    vtc_url=?,
+                    position=?,
+                    member_count=?
+                WHERE panel_id=? AND slot_number=?
+            """, (
+                interaction.user.id,
+                vtc_name,
+                vtc_url,
+                position,
+                member_count,
+                panel_id,
+                slot_number
+            ))
+            await db.commit()
+
+        await interaction.followup.send(
+            f"🟡 Slot {slot_number} request submitted."
         )
+
+        # staff message
+        channel = interaction.guild.get_channel(STAFF_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="Slot Booking Request",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="User", value=interaction.user.mention)
+            embed.add_field(name="Slot", value=str(slot_number))
+            embed.add_field(name="VTC", value=vtc_name, inline=False)
+            embed.add_field(name="Position", value=position)
+            embed.add_field(name="Members", value=member_count)
+            embed.add_field(name="VTC URL", value=vtc_url, inline=False)
+
+            view = StaffApproveView(panel_id, slot_number, interaction.user.id)
+            await channel.send(embed=embed, view=view)
+
+        await self.refresh_panel(panel_id)
+
+    # -----------------------------
+    # REFRESH PANEL
+    # -----------------------------
+    async def refresh_panel(self, panel_id):
+        async with aiosqlite.connect(DB_NAME) as db:
+            panel = await db.execute_fetchone("""
+                SELECT channel_id, message_id, event_id
+                FROM panels WHERE id=?
+            """, (panel_id,))
+
+            if not panel or not panel[0]:
+                return
+
+            channel_id, message_id, event_id = panel
+
+            event = await db.execute_fetchone("""
+                SELECT event_name
+                FROM events WHERE event_id=?
+            """, (event_id,))
+
+            slots = await db.execute_fetchall("""
+                SELECT slot_number, status
+                FROM slots WHERE panel_id=?
+            """, (panel_id,))
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+        try:
+            msg = await channel.fetch_message(message_id)
+        except:
+            return
+
+        event_name = event[0]
+
+        embed = discord.Embed(
+            title=event_name,
+            description="Click a slot to book.",
+            color=discord.Color.blue()
+        )
+
+        view = SlotView(panel_id, slots)
+        await msg.edit(embed=embed, view=view)
 
 
 async def setup(bot):
