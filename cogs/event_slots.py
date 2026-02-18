@@ -333,5 +333,69 @@ class SlotBooking(commands.Cog):
         await interaction.followup.send(f"🟡 Slot {slot_number} request submitted.")
 
 
+        channel = interaction.guild.get_channel(STAFF_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="Slot Booking Request",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="User", value=interaction.user.mention)
+            embed.add_field(name="Slot", value=str(slot_number))
+            embed.add_field(name="VTC", value=vtc_name, inline=False)
+            embed.add_field(name="Position", value=position)
+            embed.add_field(name="Members", value=member_count)
+            embed.add_field(name="VTC URL", value=vtc_url, inline=False)
+
+            view = StaffApproveView(panel_id, slot_number, interaction.user.id)
+            await channel.send(embed=embed, view=view)
+
+        await self.refresh_panel(panel_id)
+
+    # -----------------------------
+    # REFRESH PANEL
+    # -----------------------------
+    async def refresh_panel(self, panel_id):
+        async with aiosqlite.connect(DB_NAME) as db:
+            panel = await db.execute_fetchone("""
+                SELECT channel_id, message_id, event_id
+                FROM panels WHERE id=?
+            """, (panel_id,))
+
+            if not panel or not panel[0]:
+                return
+
+            channel_id, message_id, event_id = panel
+
+            event = await db.execute_fetchone("""
+                SELECT event_name
+                FROM events WHERE event_id=?
+            """, (event_id,))
+
+            slots = await db.execute_fetchall("""
+                SELECT slot_number, status
+                FROM slots WHERE panel_id=?
+            """, (panel_id,))
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+        try:
+            msg = await channel.fetch_message(message_id)
+        except:
+            return
+
+        event_name = event[0]
+
+        embed = discord.Embed(
+            title=event_name,
+            description="Click a slot to book.",
+            color=discord.Color.blue()
+        )
+
+        view = SlotView(panel_id, slots)
+        await msg.edit(embed=embed, view=view)
+
+
 async def setup(bot):
     await bot.add_cog(SlotBooking(bot))
