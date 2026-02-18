@@ -323,57 +323,85 @@ class SlotBooking(commands.Cog):
             f"✅ Panel **{panel_name}** created.\nPanel ID: `{panel_id}`"
         )
 
-    # -----------------------------
-    # SEND PANEL
-    # -----------------------------
-    @app_commands.command(name="sendpanel")
-    async def sendpanel(self, interaction: discord.Interaction, panel_id: int):
-        await interaction.response.defer(ephemeral=True)
+# -----------------------------
+# SEND PANEL
+# -----------------------------
+@app_commands.command(name="sendpanel")
+async def sendpanel(self, interaction: discord.Interaction, panel_id: int):
+    await interaction.response.defer(ephemeral=True)
 
-        async with aiosqlite.connect(DB_NAME) as db:
-            panel = await db.execute_fetchone("""
-                SELECT p.panel_name, p.slot_image, e.event_name
-                FROM panels p
-                JOIN events e ON p.event_id = e.event_id
-                WHERE p.id=?
-            """, (panel_id,))
-
-            slots = await db.execute_fetchall("""
-                SELECT slot_number, status
-                FROM slots
-                WHERE panel_id=?
-                ORDER BY slot_number
-            """, (panel_id,))
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Get panel info
+        panel = await db.execute_fetchone("""
+            SELECT panel_name, slot_image, event_id
+            FROM panels
+            WHERE id=?
+        """, (panel_id,))
 
         if not panel:
-            return await interaction.followup.send("❌ Panel not found.", ephemeral=True)
+            return await interaction.followup.send(
+                "❌ Panel not found.", ephemeral=True
+            )
 
-        panel_name, slot_image, event_name = panel
+        panel_name, slot_image, event_id = panel
 
-        embed = discord.Embed(
-            title=f"{event_name} — {panel_name}",
-            description="Click a slot to book.",
-            color=discord.Color.blue()
-        )
+        # Get event name
+        event = await db.execute_fetchone("""
+            SELECT event_name
+            FROM events
+            WHERE event_id=?
+        """, (event_id,))
 
-        if slot_image:
-            embed.set_image(url=slot_image)
+        if not event:
+            return await interaction.followup.send(
+                "❌ Event not found. Re-import the event.",
+                ephemeral=True
+            )
 
-        view = SlotView(panel_id, slots)
+        event_name = event[0]
+
+        # Get slots
+        slots = await db.execute_fetchall("""
+            SELECT slot_number, status
+            FROM slots
+            WHERE panel_id=?
+            ORDER BY slot_number
+        """, (panel_id,))
+
+    # Create embed
+    embed = discord.Embed(
+        title=f"{event_name} — {panel_name}",
+        description="Click a slot to book.",
+        color=discord.Color.blue()
+    )
+
+    if slot_image:
+        embed.set_image(url=slot_image)
+
+    view = SlotView(panel_id, slots)
+
+    # Send panel
+    try:
         msg = await interaction.channel.send(embed=embed, view=view)
-
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("""
-                UPDATE panels
-                SET message_id=?, channel_id=?
-                WHERE id=?
-            """, (msg.id, interaction.channel.id, panel_id))
-            await db.commit()
-
-        await interaction.followup.send(
-            f"✅ Panel sent.\nPanel ID: `{panel_id}`",
+    except discord.Forbidden:
+        return await interaction.followup.send(
+            "❌ I don't have permission to send messages here.",
             ephemeral=True
         )
+
+    # Save message location
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            UPDATE panels
+            SET message_id=?, channel_id=?
+            WHERE id=?
+        """, (msg.id, interaction.channel.id, panel_id))
+        await db.commit()
+
+    await interaction.followup.send(
+        f"✅ Panel sent successfully.\nPanel ID: `{panel_id}`",
+        ephemeral=True
+    )
 
     # -----------------------------
     # PROCESS BOOKING
