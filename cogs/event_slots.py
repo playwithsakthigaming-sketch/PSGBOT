@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 
 DB_NAME = "slots.db"
-STAFF_CHANNEL_ID = int(os.getenv("STAFF_CHANNEL_ID", 0))
+STAFF_CHANNEL_ID = 1465720466420269121
 
 
 # ===============================
