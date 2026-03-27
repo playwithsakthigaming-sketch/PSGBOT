@@ -94,19 +94,11 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
 # BUTTON
 # ===============================
 class SlotButton(discord.ui.Button):
-    def __init__(self, panel_id, slot_number, status):
-        style = discord.ButtonStyle.success
-        disabled = False
-
-        if status == "pending":
-            style = discord.ButtonStyle.primary
-            disabled = True
-        elif status == "booked":
-            style = discord.ButtonStyle.danger
-            disabled = True
-
-        super().__init__(label=str(slot_number), style=style, disabled=disabled)
-
+    def __init__(self, panel_id, slot_number):
+        super().__init__(
+            label=str(slot_number),
+            style=discord.ButtonStyle.success
+        )
         self.panel_id = panel_id
         self.slot_number = slot_number
 
@@ -120,8 +112,11 @@ class SlotButton(discord.ui.Button):
 class SlotView(discord.ui.View):
     def __init__(self, panel_id, slots):
         super().__init__(timeout=None)
+
         for s, status, vtc in slots:
-            self.add_item(SlotButton(panel_id, s, status))
+            # ✅ SHOW ONLY AVAILABLE
+            if status == "open":
+                self.add_item(SlotButton(panel_id, s))
 
 
 # ===============================
@@ -138,23 +133,18 @@ class StaffApproveView(discord.ui.View):
 
         async with aiosqlite.connect(DB_NAME) as db:
 
-            # SLOT DATA
             cursor = await db.execute(
                 "SELECT booked_by, vtc_name FROM slots WHERE panel_id=? AND slot_number=?",
                 (self.panel_id, self.slot_number)
             )
-            slot = await cursor.fetchone()
-            user_id, vtc_name = slot
+            user_id, vtc_name = await cursor.fetchone()
 
-            # PANEL DATA
             cursor = await db.execute(
                 "SELECT event_id, slot_image FROM panels WHERE id=?",
                 (self.panel_id,)
             )
-            panel = await cursor.fetchone()
-            event_id, slot_image = panel
+            event_id, slot_image = await cursor.fetchone()
 
-            # EVENT NAME
             cursor = await db.execute(
                 "SELECT event_name FROM events WHERE event_id=?",
                 (event_id,)
@@ -162,13 +152,11 @@ class StaffApproveView(discord.ui.View):
             event = await cursor.fetchone()
             event_name = event[0] if event else "Unknown Event"
 
-            # UPDATE SLOT
             await db.execute(
                 "UPDATE slots SET status='booked' WHERE panel_id=? AND slot_number=?",
                 (self.panel_id, self.slot_number)
             )
 
-            # HISTORY
             await db.execute(
                 "INSERT INTO history VALUES (NULL,?,?,?,?, 'approved', strftime('%s','now'))",
                 (self.panel_id, self.slot_number, user_id, vtc_name)
@@ -176,26 +164,18 @@ class StaffApproveView(discord.ui.View):
 
             await db.commit()
 
-        # ===============================
-        # SEND DM
-        # ===============================
+        # DM USER
         user = interaction.client.get_user(user_id)
-
         if user:
             try:
-                embed = discord.Embed(
-                    title="✅ Slot Approved",
-                    color=discord.Color.green()
-                )
+                embed = discord.Embed(title="✅ Slot Approved", color=discord.Color.green())
                 embed.add_field(name="Event", value=event_name, inline=False)
                 embed.add_field(name="Slot", value=f"Slot {self.slot_number}")
                 embed.add_field(name="VTC", value=vtc_name)
-
                 if slot_image:
                     embed.set_image(url=slot_image)
 
                 await user.send(embed=embed)
-
             except:
                 print("DM failed")
 
@@ -227,7 +207,6 @@ class SlotBooking(commands.Cog):
     def cog_unload(self):
         self.auto_refresh.cancel()
 
-    # SLOT TEXT UI
     def build_slot_text(self, slots):
         lines = []
         for s, status, vtc in slots:
@@ -239,7 +218,6 @@ class SlotBooking(commands.Cog):
                 lines.append(f"🔴 Slot {s}: {vtc}")
         return "\n".join(lines)
 
-    # AUTO REFRESH
     @tasks.loop(seconds=10)
     async def auto_refresh(self):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -298,10 +276,7 @@ class SlotBooking(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         async with aiosqlite.connect(DB_NAME) as db:
-            cursor = await db.execute(
-                "SELECT panel_name, slot_image FROM panels WHERE id=?",
-                (panel_id,)
-            )
+            cursor = await db.execute("SELECT panel_name, slot_image FROM panels WHERE id=?", (panel_id,))
             panel = await cursor.fetchone()
 
             cursor = await db.execute(
