@@ -7,7 +7,7 @@ from datetime import datetime
 
 DB_NAME = "slots.db"
 STAFF_CHANNEL_ID = 1465720466420269121
-STAFF_ROLE_ID = 123456789012345678  # 🔁 CHANGE
+STAFF_ROLE_ID = 1419223859483115591  # 🔁 CHANGE
 
 
 # ===============================
