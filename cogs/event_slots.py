@@ -91,32 +91,57 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
 
 
 # ===============================
-# BUTTON
+# DROPDOWN
 # ===============================
-class SlotButton(discord.ui.Button):
-    def __init__(self, panel_id, slot_number):
+class SlotSelect(discord.ui.Select):
+    def __init__(self, panel_id, slots):
+
+        options = []
+
+        for s, status, vtc in slots:
+            if status == "open":
+                options.append(
+                    discord.SelectOption(
+                        label=f"Slot {s}",
+                        description="Available",
+                        value=str(s)
+                    )
+                )
+
+        if not options:
+            options.append(
+                discord.SelectOption(
+                    label="No slots available",
+                    value="none",
+                    default=True
+                )
+            )
+
         super().__init__(
-            label=str(slot_number),
-            style=discord.ButtonStyle.success
+            placeholder="Select a slot...",
+            options=options,
+            min_values=1,
+            max_values=1
         )
+
         self.panel_id = panel_id
-        self.slot_number = slot_number
 
     async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            return await interaction.response.send_message("❌ No slots", ephemeral=True)
+
+        slot_number = int(self.values[0])
         cog = interaction.client.get_cog("SlotBooking")
+
         await interaction.response.send_modal(
-            BookingModal(cog, self.panel_id, self.slot_number)
+            BookingModal(cog, self.panel_id, slot_number)
         )
 
 
 class SlotView(discord.ui.View):
     def __init__(self, panel_id, slots):
         super().__init__(timeout=None)
-
-        for s, status, vtc in slots:
-            # ✅ SHOW ONLY AVAILABLE
-            if status == "open":
-                self.add_item(SlotButton(panel_id, s))
+        self.add_item(SlotSelect(panel_id, slots))
 
 
 # ===============================
@@ -164,7 +189,7 @@ class StaffApproveView(discord.ui.View):
 
             await db.commit()
 
-        # DM USER
+        # DM
         user = interaction.client.get_user(user_id)
         if user:
             try:
@@ -174,12 +199,11 @@ class StaffApproveView(discord.ui.View):
                 embed.add_field(name="VTC", value=vtc_name)
                 if slot_image:
                     embed.set_image(url=slot_image)
-
                 await user.send(embed=embed)
             except:
-                print("DM failed")
+                pass
 
-        await interaction.response.send_message("✅ Approved & DM sent", ephemeral=True)
+        await interaction.response.send_message("✅ Approved", ephemeral=True)
         await interaction.client.get_cog("SlotBooking").refresh_panel(self.panel_id)
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
@@ -227,7 +251,7 @@ class SlotBooking(commands.Cog):
         for (pid,) in panels:
             await self.refresh_panel(pid)
 
-    # IMPORT EVENT
+    # COMMANDS
     @app_commands.command(name="importevent")
     async def importevent(self, interaction: discord.Interaction, event_id: int):
         await interaction.response.defer(ephemeral=True)
@@ -247,7 +271,6 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send("✅ Event imported", ephemeral=True)
 
-    # CREATE PANEL
     @app_commands.command(name="createpanel")
     async def createpanel(self, interaction: discord.Interaction,
                           event_id: int, panel_name: str,
@@ -270,7 +293,6 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send(f"✅ Panel created ID: {pid}", ephemeral=True)
 
-    # SEND PANEL
     @app_commands.command(name="sendpanel")
     async def sendpanel(self, interaction: discord.Interaction, panel_id: int):
         await interaction.response.defer(ephemeral=True)
@@ -305,7 +327,37 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send("✅ Panel sent", ephemeral=True)
 
-    # BOOKING
+    @app_commands.command(name="leaderboard")
+    async def leaderboard(self, interaction: discord.Interaction, event_id: int):
+        async with aiosqlite.connect(DB_NAME) as db:
+            rows = await db.execute_fetchall("""
+            SELECT h.vtc_name, COUNT(*) FROM history h
+            JOIN panels p ON h.panel_id=p.id
+            WHERE h.action='approved' AND p.event_id=?
+            GROUP BY h.vtc_name ORDER BY COUNT(*) DESC LIMIT 10
+            """, (event_id,))
+
+        embed = discord.Embed(title=f"🏆 Event {event_id}", color=discord.Color.gold())
+        for i, (v, t) in enumerate(rows, 1):
+            embed.add_field(name=f"{i}. {v}", value=f"{t} slots")
+
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="slothistory")
+    async def slothistory(self, interaction: discord.Interaction, event_id: int):
+        async with aiosqlite.connect(DB_NAME) as db:
+            rows = await db.execute_fetchall("""
+            SELECT h.slot_number, h.vtc_name, h.action, h.timestamp
+            FROM history h JOIN panels p ON h.panel_id=p.id
+            WHERE p.event_id=? ORDER BY h.id DESC LIMIT 10
+            """, (event_id,))
+
+        embed = discord.Embed(title=f"📜 Event {event_id}", color=discord.Color.blue())
+        for s, v, a, t in rows:
+            embed.add_field(name=f"Slot {s} • {v}", value=f"{a} <t:{t}:R>", inline=False)
+
+        await interaction.response.send_message(embed=embed)
+
     async def process_booking(self, interaction, panel_id, slot_number,
                               vtc_name, vtc_url, position, member_count):
 
@@ -338,7 +390,6 @@ class SlotBooking(commands.Cog):
 
         await self.refresh_panel(panel_id)
 
-    # REFRESH PANEL
     async def refresh_panel(self, panel_id):
         async with aiosqlite.connect(DB_NAME) as db:
             cursor = await db.execute(
@@ -359,7 +410,6 @@ class SlotBooking(commands.Cog):
                 msg = await channel.fetch_message(panel[0])
                 embed = msg.embeds[0]
                 embed.description = self.build_slot_text(slots)
-
                 await msg.edit(embed=embed, view=SlotView(panel_id, slots))
             except:
                 pass
