@@ -3,10 +3,11 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import aiosqlite
 import aiohttp
-import os
 from datetime import datetime
 
 DB_NAME = "slots.db"
+
+# ✅ YOUR STAFF CHANNEL ID
 STAFF_CHANNEL_ID = 1465720466420269121
 
 
@@ -59,7 +60,7 @@ async def setup_database():
 
 
 # ===============================
-# MODAL (FIXED)
+# MODAL
 # ===============================
 class BookingModal(discord.ui.Modal, title="Slot Booking"):
     def __init__(self, cog, panel_id, slot_number):
@@ -103,7 +104,7 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
 
 
 # ===============================
-# BUTTON
+# SLOT BUTTON
 # ===============================
 class SlotButton(discord.ui.Button):
     def __init__(self, panel_id, slot_number, status):
@@ -137,7 +138,7 @@ class SlotView(discord.ui.View):
 
 
 # ===============================
-# STAFF
+# STAFF VIEW
 # ===============================
 class StaffApproveView(discord.ui.View):
     def __init__(self, panel_id, slot_number):
@@ -195,7 +196,7 @@ class StaffApproveView(discord.ui.View):
 
 
 # ===============================
-# COG
+# MAIN COG
 # ===============================
 class SlotBooking(commands.Cog):
     def __init__(self, bot):
@@ -216,7 +217,9 @@ class SlotBooking(commands.Cog):
         for (pid,) in panels:
             await self.refresh_panel(pid)
 
+    # -----------------------------
     # IMPORT EVENT
+    # -----------------------------
     @app_commands.command(name="importevent")
     async def importevent(self, interaction: discord.Interaction, event_id: int):
         await interaction.response.defer()
@@ -236,7 +239,9 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send("✅ Event imported")
 
+    # -----------------------------
     # CREATE PANEL
+    # -----------------------------
     @app_commands.command(name="createpanel")
     async def createpanel(self, interaction: discord.Interaction,
                           event_id: int, panel_name: str,
@@ -259,7 +264,9 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send(f"✅ Panel created ID: {pid}")
 
+    # -----------------------------
     # SEND PANEL
+    # -----------------------------
     @app_commands.command(name="sendpanel")
     async def sendpanel(self, interaction: discord.Interaction, panel_id: int):
         await interaction.response.defer(ephemeral=True)
@@ -274,7 +281,7 @@ class SlotBooking(commands.Cog):
             cur = await db.execute("SELECT slot_number, status FROM slots WHERE panel_id=?", (panel_id,))
             slots = await cur.fetchall()
 
-        embed = discord.Embed(title=panel[0], description="Click a slot", color=discord.Color.blue())
+        embed = discord.Embed(title=panel[0], description="Click a slot to book", color=discord.Color.blue())
         if panel[1]:
             embed.set_image(url=panel[1])
 
@@ -287,7 +294,9 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send("✅ Panel sent", ephemeral=True)
 
+    # -----------------------------
     # LEADERBOARD
+    # -----------------------------
     @app_commands.command(name="leaderboard")
     async def leaderboard(self, interaction: discord.Interaction):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -302,7 +311,9 @@ class SlotBooking(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    # HISTORY
+    # -----------------------------
+    # SLOT HISTORY
+    # -----------------------------
     @app_commands.command(name="slothistory")
     async def slothistory(self, interaction: discord.Interaction):
         async with aiosqlite.connect(DB_NAME) as db:
@@ -317,7 +328,9 @@ class SlotBooking(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    # BOOKING
+    # -----------------------------
+    # BOOKING + STAFF SEND
+    # -----------------------------
     async def process_booking(self, interaction, panel_id, slot_number,
                               vtc_name, vtc_url, position, member_count):
 
@@ -332,14 +345,33 @@ class SlotBooking(commands.Cog):
                 return await interaction.response.send_message("❌ Slot taken", ephemeral=True)
 
             await db.execute(
-                "UPDATE slots SET status='pending', booked_by=?, vtc_name=?, vtc_url=?, position=?, member_count=? WHERE panel_id=? AND slot_number=?",
+                """UPDATE slots SET status='pending', booked_by=?, vtc_name=?, vtc_url=?, position=?, member_count=?
+                   WHERE panel_id=? AND slot_number=?""",
                 (interaction.user.id, vtc_name, vtc_url, position, member_count, panel_id, slot_number)
             )
             await db.commit()
 
-        await interaction.response.send_message("🟡 Request sent", ephemeral=True)
+        await interaction.response.send_message("🟡 Booking sent for approval", ephemeral=True)
 
-    # REFRESH
+        # ✅ SEND TO STAFF CHANNEL
+        channel = self.bot.get_channel(STAFF_CHANNEL_ID)
+
+        if channel:
+            embed = discord.Embed(title="📥 New Slot Booking", color=discord.Color.orange())
+            embed.add_field(name="User", value=interaction.user.mention)
+            embed.add_field(name="Slot", value=f"Slot {slot_number}")
+            embed.add_field(name="VTC", value=vtc_name, inline=False)
+            embed.add_field(name="Members", value=str(member_count))
+
+            await channel.send(embed=embed, view=StaffApproveView(panel_id, slot_number))
+        else:
+            print("❌ Staff channel not found")
+
+        await self.refresh_panel(panel_id)
+
+    # -----------------------------
+    # REFRESH PANEL
+    # -----------------------------
     async def refresh_panel(self, panel_id):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("SELECT message_id, channel_id FROM panels WHERE id=?", (panel_id,))
