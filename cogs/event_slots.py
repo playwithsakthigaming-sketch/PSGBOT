@@ -6,8 +6,6 @@ import aiohttp
 from datetime import datetime
 
 DB_NAME = "slots.db"
-
-# ✅ YOUR STAFF CHANNEL ID
 STAFF_CHANNEL_ID = 1465720466420269121
 
 
@@ -83,9 +81,6 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
         try:
             member_count = int(self.member_count.value)
 
-            if member_count <= 0:
-                return await interaction.response.send_message("❌ Invalid member count", ephemeral=True)
-
             await self.cog.process_booking(
                 interaction,
                 self.panel_id,
@@ -95,30 +90,30 @@ class BookingModal(discord.ui.Modal, title="Slot Booking"):
                 self.position.value,
                 member_count
             )
-
-        except ValueError:
-            await interaction.response.send_message("❌ Member count must be number", ephemeral=True)
-
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+        except:
+            await interaction.response.send_message("❌ Invalid input", ephemeral=True)
 
 
 # ===============================
-# SLOT BUTTON
+# BUTTON
 # ===============================
 class SlotButton(discord.ui.Button):
-    def __init__(self, panel_id, slot_number, status):
+    def __init__(self, panel_id, slot_number, status, vtc_name):
+        label = f"Slot {slot_number}"
         style = discord.ButtonStyle.success
         disabled = False
 
         if status == "pending":
             style = discord.ButtonStyle.primary
             disabled = True
+            label = f"🟡 {slot_number}"
         elif status == "booked":
             style = discord.ButtonStyle.danger
             disabled = True
+            short = vtc_name[:8] if vtc_name else ""
+            label = f"{slot_number} • {short}"
 
-        super().__init__(label=f"Slot {slot_number}", style=style, disabled=disabled)
+        super().__init__(label=label, style=style, disabled=disabled)
 
         self.panel_id = panel_id
         self.slot_number = slot_number
@@ -133,12 +128,12 @@ class SlotButton(discord.ui.Button):
 class SlotView(discord.ui.View):
     def __init__(self, panel_id, slots):
         super().__init__(timeout=None)
-        for s, status in slots:
-            self.add_item(SlotButton(panel_id, s, status))
+        for s, status, vtc in slots:
+            self.add_item(SlotButton(panel_id, s, status, vtc))
 
 
 # ===============================
-# STAFF VIEW
+# STAFF
 # ===============================
 class StaffApproveView(discord.ui.View):
     def __init__(self, panel_id, slot_number):
@@ -173,22 +168,10 @@ class StaffApproveView(discord.ui.View):
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
     async def reject(self, interaction: discord.Interaction, _):
         async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute(
-                "SELECT booked_by, vtc_name FROM slots WHERE panel_id=? AND slot_number=?",
-                (self.panel_id, self.slot_number)
-            )
-            slot = await cur.fetchone()
-
             await db.execute(
                 "UPDATE slots SET status='open', booked_by=NULL WHERE panel_id=? AND slot_number=?",
                 (self.panel_id, self.slot_number)
             )
-
-            await db.execute(
-                "INSERT INTO history VALUES (NULL,?,?,?,?, 'rejected', strftime('%s','now'))",
-                (self.panel_id, self.slot_number, slot[0], slot[1])
-            )
-
             await db.commit()
 
         await interaction.response.send_message("❌ Rejected", ephemeral=True)
@@ -211,37 +194,34 @@ class SlotBooking(commands.Cog):
     @tasks.loop(seconds=10)
     async def auto_refresh(self):
         async with aiosqlite.connect(DB_NAME) as db:
-            cur = await db.execute("SELECT id FROM panels WHERE message_id IS NOT NULL")
-            panels = await cur.fetchall()
+            panels = await db.execute_fetchall(
+                "SELECT id FROM panels WHERE message_id IS NOT NULL"
+            )
 
         for (pid,) in panels:
             await self.refresh_panel(pid)
 
-    # -----------------------------
     # IMPORT EVENT
-    # -----------------------------
     @app_commands.command(name="importevent")
     async def importevent(self, interaction: discord.Interaction, event_id: int):
         await interaction.response.defer()
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.truckersmp.com/v2/events/{event_id}") as r:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"https://api.truckersmp.com/v2/events/{event_id}") as r:
                 data = await r.json()
-                event = data["response"]
+                e = data["response"]
 
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute(
                 "INSERT INTO events VALUES (NULL,?,?,?,?)",
-                (interaction.guild_id, event_id, event["name"],
-                 int(datetime.fromisoformat(event["start_at"].replace("Z","+00:00")).timestamp()))
+                (interaction.guild_id, event_id, e["name"],
+                 int(datetime.fromisoformat(e["start_at"].replace("Z","+00:00")).timestamp()))
             )
             await db.commit()
 
-        await interaction.followup.send("✅ Event imported")
+        await interaction.followup.send"✅ Event imported", ephemeral=True)
 
-    # -----------------------------
     # CREATE PANEL
-    # -----------------------------
     @app_commands.command(name="createpanel")
     async def createpanel(self, interaction: discord.Interaction,
                           event_id: int, panel_name: str,
@@ -262,11 +242,9 @@ class SlotBooking(commands.Cog):
 
             await db.commit()
 
-        await interaction.followup.send(f"✅ Panel created ID: {pid}")
+        await interaction.followup.send(f"✅ Panel created ID: {pid}", ephemeral=True)
 
-    # -----------------------------
     # SEND PANEL
-    # -----------------------------
     @app_commands.command(name="sendpanel")
     async def sendpanel(self, interaction: discord.Interaction, panel_id: int):
         await interaction.response.defer(ephemeral=True)
@@ -275,13 +253,13 @@ class SlotBooking(commands.Cog):
             cur = await db.execute("SELECT panel_name, slot_image FROM panels WHERE id=?", (panel_id,))
             panel = await cur.fetchone()
 
-            if not panel:
-                return await interaction.followup.send("❌ Panel not found", ephemeral=True)
-
-            cur = await db.execute("SELECT slot_number, status FROM slots WHERE panel_id=?", (panel_id,))
+            cur = await db.execute(
+                "SELECT slot_number, status, vtc_name FROM slots WHERE panel_id=?",
+                (panel_id,)
+            )
             slots = await cur.fetchall()
 
-        embed = discord.Embed(title=panel[0], description="Click a slot to book", color=discord.Color.blue())
+        embed = discord.Embed(title=panel[0], color=discord.Color.blue())
         if panel[1]:
             embed.set_image(url=panel[1])
 
@@ -294,43 +272,40 @@ class SlotBooking(commands.Cog):
 
         await interaction.followup.send("✅ Panel sent", ephemeral=True)
 
-    # -----------------------------
-    # LEADERBOARD
-    # -----------------------------
+    # LEADERBOARD (EVENT BASED)
     @app_commands.command(name="leaderboard")
-    async def leaderboard(self, interaction: discord.Interaction):
+    async def leaderboard(self, interaction: discord.Interaction, event_id: int):
         async with aiosqlite.connect(DB_NAME) as db:
             rows = await db.execute_fetchall("""
-            SELECT vtc_name, COUNT(*) FROM history WHERE action='approved'
-            GROUP BY vtc_name ORDER BY COUNT(*) DESC LIMIT 10
-            """)
+            SELECT h.vtc_name, COUNT(*) FROM history h
+            JOIN panels p ON h.panel_id=p.id
+            WHERE h.action='approved' AND p.event_id=?
+            GROUP BY h.vtc_name ORDER BY COUNT(*) DESC LIMIT 10
+            """, (event_id,))
 
-        embed = discord.Embed(title="🏆 Leaderboard", color=discord.Color.gold())
+        embed = discord.Embed(title=f"🏆 Event {event_id} Leaderboard", color=discord.Color.gold())
         for i, (v, t) in enumerate(rows, 1):
             embed.add_field(name=f"{i}. {v}", value=f"{t} slots")
 
         await interaction.response.send_message(embed=embed)
 
-    # -----------------------------
-    # SLOT HISTORY
-    # -----------------------------
+    # HISTORY (EVENT BASED)
     @app_commands.command(name="slothistory")
-    async def slothistory(self, interaction: discord.Interaction):
+    async def slothistory(self, interaction: discord.Interaction, event_id: int):
         async with aiosqlite.connect(DB_NAME) as db:
             rows = await db.execute_fetchall("""
-            SELECT slot_number, vtc_name, action, timestamp
-            FROM history ORDER BY id DESC LIMIT 10
-            """)
+            SELECT h.slot_number, h.vtc_name, h.action, h.timestamp
+            FROM history h JOIN panels p ON h.panel_id=p.id
+            WHERE p.event_id=? ORDER BY h.id DESC LIMIT 10
+            """, (event_id,))
 
-        embed = discord.Embed(title="📜 History", color=discord.Color.blue())
+        embed = discord.Embed(title=f"📜 Event {event_id} History", color=discord.Color.blue())
         for s, v, a, t in rows:
-            embed.add_field(name=f"Slot {s}", value=f"{v} - {a} <t:{t}:R>", inline=False)
+            embed.add_field(name=f"Slot {s} • {v}", value=f"{a} <t:{t}:R>", inline=False)
 
         await interaction.response.send_message(embed=embed)
 
-    # -----------------------------
-    # BOOKING + STAFF SEND
-    # -----------------------------
+    # BOOKING
     async def process_booking(self, interaction, panel_id, slot_number,
                               vtc_name, vtc_url, position, member_count):
 
@@ -345,41 +320,34 @@ class SlotBooking(commands.Cog):
                 return await interaction.response.send_message("❌ Slot taken", ephemeral=True)
 
             await db.execute(
-                """UPDATE slots SET status='pending', booked_by=?, vtc_name=?, vtc_url=?, position=?, member_count=?
-                   WHERE panel_id=? AND slot_number=?""",
+                "UPDATE slots SET status='pending', booked_by=?, vtc_name=?, vtc_url=?, position=?, member_count=? WHERE panel_id=? AND slot_number=?",
                 (interaction.user.id, vtc_name, vtc_url, position, member_count, panel_id, slot_number)
             )
             await db.commit()
 
-        await interaction.response.send_message("🟡 Booking sent for approval", ephemeral=True)
+        await interaction.response.send_message("🟡 Sent for approval", ephemeral=True)
 
-        # ✅ SEND TO STAFF CHANNEL
         channel = self.bot.get_channel(STAFF_CHANNEL_ID)
-
         if channel:
-            embed = discord.Embed(title="📥 New Slot Booking", color=discord.Color.orange())
+            embed = discord.Embed(title="📥 Booking Request", color=discord.Color.orange())
             embed.add_field(name="User", value=interaction.user.mention)
             embed.add_field(name="Slot", value=f"Slot {slot_number}")
-            embed.add_field(name="VTC", value=vtc_name, inline=False)
-            embed.add_field(name="Members", value=str(member_count))
+            embed.add_field(name="VTC", value=vtc_name)
 
             await channel.send(embed=embed, view=StaffApproveView(panel_id, slot_number))
-        else:
-            print("❌ Staff channel not found")
 
         await self.refresh_panel(panel_id)
 
-    # -----------------------------
-    # REFRESH PANEL
-    # -----------------------------
+    # REFRESH
     async def refresh_panel(self, panel_id):
         async with aiosqlite.connect(DB_NAME) as db:
             cur = await db.execute("SELECT message_id, channel_id FROM panels WHERE id=?", (panel_id,))
             panel = await cur.fetchone()
-            if not panel:
-                return
 
-            cur = await db.execute("SELECT slot_number, status FROM slots WHERE panel_id=?", (panel_id,))
+            cur = await db.execute(
+                "SELECT slot_number, status, vtc_name FROM slots WHERE panel_id=?",
+                (panel_id,)
+            )
             slots = await cur.fetchall()
 
         channel = self.bot.get_channel(panel[1])
